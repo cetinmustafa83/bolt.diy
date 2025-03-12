@@ -14,6 +14,8 @@ import globalStyles from './styles/index.scss?url';
 import xtermStyles from '@xterm/xterm/css/xterm.css?url';
 
 import 'virtual:uno.css';
+import { initializePromptUpdates } from './lib/common/prompt-updater';
+import { PromptLibrary } from '~/lib/common/prompt-library';
 
 export const links: LinksFunction = () => [
   {
@@ -86,12 +88,42 @@ export default function App() {
   const theme = useStore(themeStore);
 
   useEffect(() => {
+    // Initialize application
     logStore.logSystem('Application initialized', {
       theme,
       platform: navigator.platform,
       userAgent: navigator.userAgent,
       timestamp: new Date().toISOString(),
     });
+
+    // Initialize prompt updates
+    initializePromptUpdates()
+      .then(() => {
+        console.log('Prompt updates initialized');
+      })
+      .catch((error) => {
+        console.error('Error initializing prompt updates:', error);
+      });
+
+    // Initialize PromptLibrary
+    try {
+      // Async olarak başlatmak için Promise'i yakala ama hatayı yukarı fırlatma
+      const initPromise = PromptLibrary.initialize();
+      initPromise.then(success => {
+        if (success) {
+          console.log('PromptLibrary initialized successfully');
+        } else {
+          // Error durumunda sessizce geç, çalışmaya devam et
+          console.warn('PromptLibrary could not be initialized, using localStorage fallback');
+        }
+      }).catch(error => {
+        // Hata olursa sessizce geç, çalışmaya devam et
+        console.error('Error initializing PromptLibrary:', error);
+      });
+    } catch (error) {
+      // Herhangi bir hata olursa sessizce geç, çalışmaya devam et
+      console.error('Error starting PromptLibrary initialization:', error);
+    }
   }, []);
 
   return (

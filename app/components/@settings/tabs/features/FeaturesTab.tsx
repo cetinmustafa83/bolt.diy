@@ -1,13 +1,12 @@
-import React, { memo, useCallback, useEffect, useState } from 'react';
+// Remove unused imports (Updated to fix Vite import resolution issues)
+import React, { memo, useCallback, useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Switch } from '~/components/ui/Switch';
 import { useSettings } from '~/lib/hooks/useSettings';
 import { classNames } from '~/utils/classNames';
 import { toast } from 'react-toastify';
-import { PromptLibrary } from '~/lib/common/prompt-library';
-import Select from 'react-select';
-import type { StylesConfig, MultiValue, ActionMeta } from 'react-select';
-import { components } from 'react-select';
+import { PromptLibrary, type CustomPrompt } from '~/lib/common/prompt-library';
+import { ScrollArea } from '~/components/ui/ScrollArea';
 
 interface FeatureToggle {
   id: string;
@@ -18,12 +17,6 @@ interface FeatureToggle {
   beta?: boolean;
   experimental?: boolean;
   tooltip?: string;
-}
-
-interface PromptOption {
-  value: string;
-  label: string;
-  description?: string;
 }
 
 const FeatureCard = memo(
@@ -113,6 +106,33 @@ const FeatureSection = memo(
   ),
 );
 
+// Yardımcı fonksiyonlar
+const isClient = typeof window !== 'undefined';
+
+// Helper function to safely access localStorage
+function getFromLocalStorage(key: string, defaultValue: any = null) {
+  if (!isClient) return defaultValue;
+  
+  try {
+    const item = localStorage.getItem(key);
+    return item ? JSON.parse(item) : defaultValue;
+  } catch (error) {
+    console.error(`Error reading ${key} from localStorage:`, error);
+    return defaultValue;
+  }
+}
+
+// Helper function to safely set localStorage
+function setToLocalStorage(key: string, value: any) {
+  if (!isClient) return;
+  
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (error) {
+    console.error(`Error writing ${key} to localStorage:`, error);
+  }
+}
+
 export default function FeaturesTab() {
   const {
     autoSelectTemplate,
@@ -125,124 +145,41 @@ export default function FeaturesTab() {
     setEventLogs,
     setPromptId,
     promptId,
-    activePrompts,
-    setActivePrompts,
   } = useSettings();
-
-  // Convert library prompts to options format
-  const [allPromptOptions, setAllPromptOptions] = useState<PromptOption[]>([]);
-
-  // Initialize system prompts
-  const systemPromptOptions = React.useMemo(() => 
-    Object.entries(PromptLibrary.library).map(([id, prompt]) => ({
-      value: id,
-      label: prompt.label,
-      description: prompt.description
-    })),
-  []
-  );
-
-  // Load custom prompts
-  useEffect(() => {
-    const loadCustomPrompts = async () => {
-      try {
-        const customPrompts = await PromptLibrary.getCustomPrompts();
-        const customPromptOptions = customPrompts.map(prompt => ({
-          value: prompt.id,
-          label: prompt.label,
-          description: prompt.description
-        }));
-        setAllPromptOptions([...systemPromptOptions, ...customPromptOptions]);
-      } catch (error) {
-        console.error('Error loading custom prompts:', error);
-        setAllPromptOptions(systemPromptOptions);
-      }
-    };
-
-    loadCustomPrompts();
-  }, [systemPromptOptions]);
-
-  // Selected values for multi-select
-  const selectedValues = React.useMemo(() => 
-    allPromptOptions.filter(option => activePrompts.includes(option.value)),
-  [allPromptOptions, activePrompts]);
-
-  // Handle prompt selection
-  const handlePromptChange = async (
-    newValue: MultiValue<PromptOption>,
-    actionMeta: ActionMeta<PromptOption>
-  ) => {
-    try {
-      const newSelectedIds = newValue.map(item => item.value);
-      
-      // Find which prompts were added and removed
-      const added = newSelectedIds.filter(id => !activePrompts.includes(id));
-      const removed = activePrompts.filter(id => !newSelectedIds.includes(id));
-      
-      // Update status for added prompts
-      for (const id of added) {
-        try {
-          await PromptLibrary.setPromptStatus(id, true);
-        } catch (err) {
-          const error = err as Error;
-          console.error(`Failed to activate prompt ${id}:`, error);
-          // Update the UI state anyway to prevent UI from getting out of sync
-          // This way the UI will reflect the user's action even if the backend fails
-          continue;
-        }
-      }
-      
-      // Update status for removed prompts
-      for (const id of removed) {
-        try {
-          await PromptLibrary.setPromptStatus(id, false);
-        } catch (err) {
-          const error = err as Error;
-          console.error(`Failed to deactivate prompt ${id}:`, error);
-          // Continue with UI update despite backend error
-          continue;
-        }
-      }
-      
-      // Update UI state regardless of backend status
-      setActivePrompts(newSelectedIds);
-      
-      if (added.length > 0) {
-        toast.success(`${added.length} prompt${added.length === 1 ? '' : 's'} activated`);
-      }
-      if (removed.length > 0) {
-        toast.success(`${removed.length} prompt${removed.length === 1 ? '' : 's'} deactivated`);
-      }
-    } catch (err) {
-      const error = err as Error;
-      console.error('Error updating prompt status:', error);
-      toast.error(`Failed to update prompt status: ${error?.message || 'Unknown error'}`);
-    }
-  };
+  
+  // Add new setting for selected rules
+  const [selectedRules, setSelectedRules] = useState<string[]>([]);
+  const storageKey = 'bolt_selected_rules';
 
   // Enable features by default on first load
   React.useEffect(() => {
     // Only set defaults if values are undefined
     if (isLatestBranch === undefined) {
-      enableLatestBranch(false); // Default: OFF - Don't auto-update from main branch
+      enableLatestBranch(false);
     }
 
     if (contextOptimizationEnabled === undefined) {
-      enableContextOptimization(true); // Default: ON - Enable context optimization
+      enableContextOptimization(true);
     }
 
     if (autoSelectTemplate === undefined) {
-      setAutoSelectTemplate(true); // Default: ON - Enable auto-select templates
+      setAutoSelectTemplate(true);
     }
 
     if (promptId === undefined) {
-      setPromptId('default'); // Default: 'default'
+      setPromptId('default');
     }
 
     if (eventLogs === undefined) {
-      setEventLogs(true); // Default: ON - Enable event logging
+      setEventLogs(true);
     }
-  }, []); // Only run once on component mount
+
+    // Load selected rules from localStorage
+    const storedRules = getFromLocalStorage(storageKey);
+    if (storedRules) {
+      setSelectedRules(storedRules);
+    }
+  }, []);
 
   const handleToggleFeature = useCallback(
     (id: string, enabled: boolean) => {
@@ -316,176 +253,132 @@ export default function FeaturesTab() {
     beta: [],
   };
 
-  const selectStyles: StylesConfig<PromptOption, true> = {
-    control: (base, state) => ({
-      ...base,
-      backgroundColor: 'var(--bolt-elements-background-depth-2)',
-      borderColor: state.isFocused ? 'var(--bolt-purple-400)' : 'var(--bolt-elements-borderColor)',
-      boxShadow: state.isFocused ? '0 0 0 2px var(--bolt-purple-500-20)' : 'none',
-      '&:hover': {
-        borderColor: 'var(--bolt-purple-300)',
-        backgroundColor: 'var(--bolt-elements-background-depth-3)',
-      },
-      borderRadius: '0.5rem',
-      padding: '2px 4px',
-      transition: 'all 200ms ease',
-      minHeight: '40px',
-      border: '1px solid var(--bolt-elements-borderColor)',
-    }),
-    menu: (base) => ({
-      ...base,
-      backgroundColor: 'var(--bolt-elements-background-depth-1)',
-      border: '1px solid var(--bolt-elements-borderColor)',
-      boxShadow: 'var(--bolt-elements-shadow-md)',
-      overflow: 'hidden',
-      zIndex: 50,
-      borderRadius: '0.5rem',
-      marginTop: '4px',
-      padding: '2px',
-    }),
-    menuList: (base) => ({
-      ...base,
-      padding: '6px',
-      backgroundColor: 'var(--bolt-elements-background-depth-1)',
-      '&::-webkit-scrollbar': {
-        width: '8px',
-        height: '8px',
-      },
-      '&::-webkit-scrollbar-track': {
-        background: 'var(--bolt-elements-background-depth-2)',
-        borderRadius: '4px',
-      },
-      '&::-webkit-scrollbar-thumb': {
-        background: 'var(--bolt-purple-400-20)',
-        borderRadius: '4px',
-        '&:hover': {
-          background: 'var(--bolt-purple-400-30)',
-        },
-      },
-    }),
-    option: (base, state) => ({
-      ...base,
-      backgroundColor: state.isFocused 
-        ? 'var(--bolt-purple-500-15)' 
-        : state.isSelected
-        ? 'var(--bolt-purple-500-25)'
-        : 'var(--bolt-elements-background-depth-2)',
-      color: state.isSelected 
-        ? 'var(--bolt-purple-300)' 
-        : 'var(--bolt-elements-textPrimary)',
-      padding: '8px 12px',
-      borderRadius: '0.375rem',
-      cursor: 'pointer',
-      fontSize: '0.875rem',
-      fontWeight: 500,
-      marginBottom: '2px',
-      '&:active': {
-        backgroundColor: 'var(--bolt-purple-500-30)',
-      },
-      '&:hover': {
-        backgroundColor: 'var(--bolt-purple-400-20)',
-        color: 'var(--bolt-purple-300)',
-        borderColor: 'var(--bolt-purple-300)',
-      },
-      transition: 'all 150ms ease',
-    }),
-    multiValue: (base) => ({
-      ...base,
-      backgroundColor: 'var(--bolt-purple-500-10)',
-      borderRadius: '0.375rem',
-      border: '1px solid var(--bolt-purple-400-40)',
-      padding: '1px 2px',
-      margin: '2px',
-      boxShadow: 'var(--bolt-elements-shadow-sm)',
-      '&:hover': {
-        backgroundColor: 'var(--bolt-purple-400-15)',
-        border: '1px solid var(--bolt-purple-300)',
-      },
-    }),
-    multiValueLabel: (base) => ({
-      ...base,
-      color: 'var(--bolt-purple-700)',
-      backgroundColor: 'transparent',
-      padding: '2px 6px 2px 2px',
-      fontSize: '0.875rem',
-      fontWeight: 500,
-    }),
-    multiValueRemove: (base) => ({
-      ...base,
-      color: 'var(--bolt-red-400)',
-      cursor: 'pointer',
-      backgroundColor: 'transparent',
-      '&:hover': {
-        backgroundColor: 'var(--bolt-red-400-20)',
-        color: 'var(--bolt-red-300)',
-      },
-      borderRadius: '0 0.375rem 0.375rem 0',
-      padding: '0 4px',
-      transition: 'all 150ms ease',
-    }),
-    input: (base) => ({
-      ...base,
-      color: 'var(--bolt-elements-textPrimary)',
-      margin: '2px',
-      fontSize: '0.875rem',
-      '& input': {
-        color: 'var(--bolt-elements-textPrimary) !important',
-      },
-      '::placeholder': {
-        color: 'var(--bolt-elements-textSecondary)',
-      },
-    }),
-    placeholder: (base) => ({
-      ...base,
-      color: 'var(--bolt-elements-textSecondary)',
-      fontSize: '0.875rem',
-    }),
-    noOptionsMessage: (base) => ({
-      ...base,
-      color: 'var(--bolt-elements-textSecondary)',
-      padding: '8px 12px',
-      fontSize: '0.875rem',
-      backgroundColor: 'var(--bolt-elements-background-depth-2)',
-      borderRadius: '0.375rem',
-    }),
-    dropdownIndicator: (base, state) => ({
-      ...base,
-      color: state.isFocused ? 'var(--bolt-purple-400)' : 'var(--bolt-elements-textSecondary)',
-      '&:hover': {
-        color: 'var(--bolt-purple-500)',
-        backgroundColor: 'var(--bolt-purple-500-10)',
-      },
-      padding: '2px 8px',
-      transition: 'all 150ms ease',
-      borderRadius: '0.25rem',
-    }),
-    clearIndicator: (base) => ({
-      ...base,
-      color: 'var(--bolt-elements-textTertiary)',
-      cursor: 'pointer',
-      '&:hover': {
-        color: 'var(--bolt-red-400)',
-        backgroundColor: 'var(--bolt-red-400-10)',
-      },
-      padding: '2px 8px',
-      transition: 'all 150ms ease',
-      borderRadius: '0.25rem',
-    }),
-    indicatorSeparator: (base) => ({
-      ...base,
-      backgroundColor: 'var(--bolt-elements-borderColor)',
-      margin: '6px 0',
-    }),
-    valueContainer: (base) => ({
-      ...base,
-      padding: '2px 6px',
-      gap: '4px',
-    }),
-    singleValue: (base) => ({
-      ...base,
-      color: 'var(--bolt-elements-textPrimary)',
-    }),
+  // State for prompts and rules data
+  const [prompts, setPrompts] = useState<CustomPrompt[]>([]);
+  const [rules, setRules] = useState<CustomPrompt[]>([]);
+  const [showOptions, setShowOptions] = useState(false);
+  const [selectedItems, setSelectedItems] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchText, setSearchText] = useState('');
+  const dropdownRef = React.useRef<HTMLDivElement>(null);
+
+  // Load prompts and rules
+  useEffect(() => {
+    function loadData() {
+      try {
+        setLoading(true);
+        
+        // Sync API'leri kullanarak verileri yükle
+        const promptsData = PromptLibrary.getCustomPromptsSync();
+        const rulesData = PromptLibrary.getRulesSync();
+        
+        setPrompts(promptsData);
+        setRules(rulesData);
+        
+        // Initialize selectedItems with promptId and stored rules
+        const initialSelected = [];
+        if (promptId) {
+          initialSelected.push(promptId);
+        }
+        
+        // selectedRules state'i değiştiğinde useEffect tetiklenmesin diye local değişken kullan
+        const storedRules = getFromLocalStorage(storageKey, []);
+        initialSelected.push(...storedRules);
+        
+        setSelectedItems(initialSelected);
+      } catch (error) {
+        console.error('Error loading prompts and rules:', error);
+        toast.error('Failed to load prompts and rules');
+      } finally {
+        setLoading(false);
+      }
+    }
+    
+    loadData();
+    
+    // Initialize PromptLibrary (ancak yükleme işlemlerini beklemiyoruz)
+    PromptLibrary.initialize().catch(error => {
+      console.error('Error initializing PromptLibrary:', error);
+    });
+  }, [promptId]);
+
+  // Handle click outside to close dropdown
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setShowOptions(false);
+      }
+    }
+    
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
+
+  // Handle selection of an item
+  const handleSelect = (id: string) => {
+    let newSelected: string[];
+    
+    if (selectedItems.includes(id)) {
+      // Remove if already selected
+      newSelected = selectedItems.filter(item => item !== id);
+    } else {
+      // Add to selection
+      newSelected = [...selectedItems, id];
+    }
+    
+    setSelectedItems(newSelected);
+    
+    try {
+      // Find the selected item using sync API
+      const item = PromptLibrary.getByIdSync(id);
+      
+      if (!item) {
+        console.error('Item not found:', id);
+        return;
+      }
+      
+      if (item.isRule) {
+        // Handle rule selection - update selected rules
+        const updatedRules = newSelected.filter(selectedId => 
+          rules.some(r => r.id === selectedId)
+        );
+        
+        setSelectedRules(updatedRules);
+        setToLocalStorage(storageKey, updatedRules);
+        
+        toast.success(`Rule ${selectedItems.includes(id) ? 'removed' : 'applied'}`);
+      } else {
+        // Handle prompt selection - update prompt ID
+        setPromptId(id);
+        toast.success(`Prompt "${item.label}" selected`);
+      }
+    } catch (error) {
+      console.error('Error handling selection:', error);
+      toast.error('Failed to update selection');
+    }
   };
+
+  // Filter items based on search
+  const filteredItems = React.useMemo(() => {
+    if (!searchText) {
+      return { prompts, rules };
+    }
+    
+    const searchLower = searchText.toLowerCase();
+    
+    return {
+      prompts: prompts.filter(item => 
+        item.label.toLowerCase().includes(searchLower) || 
+        (item.description && item.description.toLowerCase().includes(searchLower))
+      ),
+      rules: rules.filter(item => 
+        item.label.toLowerCase().includes(searchLower) || 
+        (item.description && item.description.toLowerCase().includes(searchLower))
+      )
+    };
+  }, [prompts, rules, searchText]);
 
   return (
     <div className="flex flex-col gap-8">
@@ -508,244 +401,270 @@ export default function FeaturesTab() {
       )}
 
       <motion.div
-        layout
-        className={classNames(
-          'bg-bolt-elements-background-depth-2',
-          'hover:bg-bolt-elements-background-depth-3',
-          'transition-all duration-300',
-          'rounded-lg',
-          'group',
-          'border border-bolt-elements-borderColor',
-          'hover:border-purple-500/30 dark:hover:border-purple-400/30',
-          'shadow-sm hover:shadow-md',
-        )}
+        className="group"
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.3 }}
       >
-        <div className="px-4 py-3 border-b border-bolt-elements-borderColor bg-bolt-elements-background-depth-3">
-          <div className="flex items-center gap-2">
-            <div className="i-ph:sparkle-fill w-4 h-4 text-purple-500" />
-            <p className="text-sm font-medium text-bolt-elements-textPrimary">
-              Customize AI with Prompts and Rules
-            </p>
+        <div className="flex items-start gap-3">
+          <div
+            className={classNames(
+              'p-1.5 rounded-lg text-lg mt-1',
+              'bg-bolt-elements-background-depth-3 group-hover:bg-bolt-elements-background-depth-4',
+              'transition-colors duration-200',
+              'text-purple-500',
+            )}
+          >
+            <div className="i-ph:book-open-text" />
           </div>
-        </div>
-        <div className="p-4">
-          <div className="flex items-center gap-4">
-            <div
-              className={classNames(
-                'p-2.5 rounded-lg text-xl',
-                'bg-bolt-elements-background-depth-3',
-                'transition-colors duration-200',
-                'text-purple-500',
-                'border border-bolt-elements-borderColor',
-                'shadow-sm',
-                'group-hover:border-purple-500/50 group-hover:bg-purple-100/50 dark:group-hover:bg-purple-900/20',
-              )}
-            >
-              <div className="i-ph:book-bookmark-fill" />
+          <div className="flex-1">
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-medium text-bolt-elements-textPrimary group-hover:text-purple-500 transition-colors">
+                Prompt Library & Rules
+              </h4>
             </div>
-            <div className="flex-1">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <h4 className="text-sm font-medium text-bolt-elements-textPrimary group-hover:text-purple-500 dark:group-hover:text-purple-300 transition-colors">
-                    Prompts & Rules Library
-                  </h4>
-                  <div className="px-1.5 py-0.5 rounded text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-300 font-medium">
-                    Enhanced
+            <p className="text-xs text-bolt-elements-textSecondary mt-0.5 mb-2">
+              Choose prompts and rules from the library to customize AI behavior
+            </p>
+            
+            {/* Enhanced MultiSelect component */}
+            <div ref={dropdownRef} className="relative mb-4">
+              <div className="mb-1 text-xs font-medium text-bolt-elements-textPrimary">Prompts & Rules</div>
+              <div 
+                onClick={() => setShowOptions(!showOptions)}
+                className={classNames(
+                  'p-2 rounded border cursor-pointer flex items-center justify-between',
+                  'bg-bolt-elements-background-depth-1 border-bolt-elements-borderColor',
+                  'text-bolt-elements-textPrimary text-sm min-h-[36px]',
+                  'hover:border-purple-500/30 transition-all duration-200',
+                  showOptions ? 'border-purple-500/50 ring-1 ring-purple-500/20' : ''
+                )}
+              >
+                {loading ? (
+                  <div className="flex items-center justify-center w-full py-1">
+                    <div className="animate-spin rounded-full border-2 border-t-transparent w-4 h-4 border-2 border-purple-500" />
+                    <span className="ml-2 text-bolt-elements-textSecondary">Loading...</span>
+                  </div>
+                ) : selectedItems.length > 0 ? (
+                  <div className="flex flex-wrap gap-1">
+                    {selectedItems.map(id => {
+                      const promptItem = prompts.find(p => p.id === id);
+                      const ruleItem = rules.find(r => r.id === id);
+                      const item = promptItem || ruleItem;
+                      
+                      if (!item) return null;
+                      
+                      return (
+                        <div key={id} className={classNames(
+                          "flex items-center rounded px-2 py-0.5 border text-xs",
+                          item.isRule 
+                            ? "bg-blue-500/10 border-blue-500/20 text-blue-500 dark:bg-blue-500/20 dark:border-blue-500/30 dark:text-blue-400" 
+                            : "bg-purple-500/10 border-purple-500/20 text-purple-500 dark:bg-purple-500/20 dark:border-purple-500/30 dark:text-purple-400"
+                        )}>
+                          <div className={classNames(
+                            "mr-1 text-xs",
+                            item.isRule ? "i-ph:file-text" : "i-ph:book-open-text"
+                          )} />
+                          <span className="truncate max-w-[150px]">{item.label}</span>
+                          <button 
+                            className="ml-1 opacity-70 hover:opacity-100"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleSelect(id);
+                            }}
+                          >
+                            <div className="i-ph:x-circle text-xs" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="text-bolt-elements-textTertiary text-sm">Select prompts and rules</div>
+                )}
+                <div className={classNames(
+                  "ml-2 flex-shrink-0",
+                  showOptions ? "i-ph:caret-up" : "i-ph:caret-down"
+                )} />
+              </div>
+              
+              {showOptions && (
+                <div className="absolute z-10 w-full mt-1 bg-bolt-elements-background-depth-1 border border-bolt-elements-borderColor rounded overflow-hidden shadow-lg">
+                  <div className="p-2 border-b border-bolt-elements-borderColor">
+                    <div className="relative">
+                      <div className="absolute inset-y-0 left-0 pl-2 flex items-center pointer-events-none">
+                        <div className="i-ph:magnifying-glass text-xs text-bolt-elements-textTertiary" />
+                      </div>
+                      <input
+                        type="text"
+                        placeholder="Search..."
+                        value={searchText}
+                        onChange={(e) => setSearchText(e.target.value)}
+                        className="w-full pl-7 pr-2 py-1.5 text-xs rounded border border-bolt-elements-borderColor bg-bolt-elements-background-depth-2 text-bolt-elements-textPrimary focus:outline-none focus:ring-1 focus:ring-purple-500/30"
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </div>
+                  </div>
+                  
+                  <div className="max-h-64 overflow-y-auto">
+                    {/* Prompts Section */}
+                    <div>
+                      <div className="px-3 py-2 text-xs font-medium text-bolt-elements-textPrimary bg-bolt-elements-background-depth-2 border-b border-bolt-elements-borderColor">
+                        <div className="flex items-center">
+                          <div className="i-ph:book-open-text text-xs mr-1.5" />
+                          Prompts
+                          <span className="ml-2 text-xs text-bolt-elements-textSecondary font-normal">
+                            (Choose one prompt)
+                          </span>
+                        </div>
+                      </div>
+                      
+                      {filteredItems.prompts.length > 0 ? (
+                        <div>
+                          {filteredItems.prompts.map((item) => (
+                            <div
+                              key={item.id}
+                              className={classNames(
+                                'px-3 py-2 flex items-center gap-2 cursor-pointer',
+                                'text-sm hover:bg-bolt-elements-background-depth-2',
+                                selectedItems.includes(item.id) ? 'bg-purple-500/20 dark:bg-purple-500/30' : ''
+                              )}
+                              onClick={() => handleSelect(item.id)}
+                            >
+                              <div className={classNames(
+                                'w-4 h-4 flex-shrink-0 border rounded-full',
+                                selectedItems.includes(item.id) ? 
+                                  'bg-purple-500 border-purple-500 flex items-center justify-center' : 
+                                  'border-bolt-elements-borderColor'
+                              )}>
+                                {selectedItems.includes(item.id) && <div className="w-2 h-2 rounded-full bg-white" />}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="font-medium text-bolt-elements-textPrimary truncate">
+                                  {item.label}
+                                </div>
+                                {item.description && (
+                                  <div className="text-xs text-bolt-elements-textSecondary truncate">
+                                    {item.description}
+                                  </div>
+                                )}
+                              </div>
+                              {item.version && (
+                                <div className="text-xs text-bolt-elements-textTertiary">v{item.version}</div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="px-3 py-4 text-sm text-center text-bolt-elements-textTertiary">
+                          No prompts found
+                        </div>
+                      )}
+                    </div>
+                    
+                    {/* Rules Section */}
+                    <div>
+                      <div className="px-3 py-2 text-xs font-medium text-bolt-elements-textPrimary bg-bolt-elements-background-depth-2 border-b border-bolt-elements-borderColor">
+                        <div className="flex items-center">
+                          <div className="i-ph:file-text text-xs mr-1.5" />
+                          Rules
+                          <span className="ml-2 text-xs text-bolt-elements-textSecondary font-normal">
+                            (Select multiple rules)
+                          </span>
+                        </div>
+                      </div>
+                      
+                      {filteredItems.rules.length > 0 ? (
+                        <div>
+                          {filteredItems.rules.map((item) => (
+                            <div
+                              key={item.id}
+                              className={classNames(
+                                'px-3 py-2 flex items-center gap-2 cursor-pointer',
+                                'text-sm hover:bg-bolt-elements-background-depth-2',
+                                selectedItems.includes(item.id) ? 'bg-blue-500/20 dark:bg-blue-500/30' : ''
+                              )}
+                              onClick={() => handleSelect(item.id)}
+                            >
+                              <div className={classNames(
+                                'w-4 h-4 flex-shrink-0 border rounded',
+                                selectedItems.includes(item.id) ? 
+                                  'bg-blue-500 border-blue-500 flex items-center justify-center' : 
+                                  'border-bolt-elements-borderColor'
+                              )}>
+                                {selectedItems.includes(item.id) && <div className="i-ph:check text-white text-xs" />}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="font-medium text-bolt-elements-textPrimary truncate">
+                                  {item.label}
+                                </div>
+                                {item.description && (
+                                  <div className="text-xs text-bolt-elements-textSecondary truncate">
+                                    {item.description}
+                                  </div>
+                                )}
+                              </div>
+                              {item.priority && (
+                                <div className="text-xs px-1.5 py-0.5 rounded-full bg-bolt-elements-background-depth-3 text-bolt-elements-textTertiary">
+                                  P{item.priority}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="px-3 py-4 text-sm text-center text-bolt-elements-textTertiary">
+                          No rules found
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-bolt-elements-textTertiary">
-                    Customize your AI assistance
-                  </span>
-                </div>
-              </div>
-              <Select<PromptOption, true>
-                isMulti
-                options={allPromptOptions}
-                value={selectedValues}
-                onChange={handlePromptChange}
-                className="react-select-container"
-                classNamePrefix="react-select"
-                placeholder={allPromptOptions.length > 0 ? "Search prompts..." : "No prompts available"}
-                noOptionsMessage={() => allPromptOptions.length > 0 ? "No prompts found" : "No prompts available in library"}
-                formatOptionLabel={({ label, description }: PromptOption) => (
-                  <div className="flex flex-col py-1">
-                    <span className="font-medium text-bolt-elements-textPrimary dark:text-gray-200">{label}</span>
-                    {description && (
-                      <span className="text-xs text-bolt-elements-textSecondary dark:text-gray-400 mt-0.5 line-clamp-1">{description}</span>
-                    )}
+              )}
+            </div>
+            
+            {/* Selected Items Summary */}
+            {selectedItems.length > 0 && (
+              <div className="mt-2 rounded border border-bolt-elements-borderColor bg-bolt-elements-background-depth-1 p-3">
+                <h5 className="text-xs font-medium text-bolt-elements-textPrimary mb-2">Active Configuration</h5>
+                
+                {prompts.filter(p => selectedItems.includes(p.id)).map(prompt => (
+                  <div key={prompt.id} className="mb-2">
+                    <div className="flex items-center gap-1 text-purple-500 dark:text-purple-400 text-sm">
+                      <div className="i-ph:book-open-text text-xs" />
+                      <span className="font-medium">Active Prompt:</span>
+                      <span>{prompt.label}</span>
+                    </div>
+                    <div className="mt-1 text-xs text-bolt-elements-textSecondary">
+                      {prompt.description}
+                    </div>
+                  </div>
+                ))}
+                
+                {rules.filter(r => selectedItems.includes(r.id)).length > 0 && (
+                  <div>
+                    <div className="flex items-center gap-1 text-blue-500 dark:text-blue-400 text-sm mt-3">
+                      <div className="i-ph:file-text text-xs" />
+                      <span className="font-medium">Active Rules:</span>
+                      <span>{rules.filter(r => selectedItems.includes(r.id)).length}</span>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-1">
+                      {rules.filter(r => selectedItems.includes(r.id))
+                        .sort((a, b) => (b.priority || 0) - (a.priority || 0))
+                        .map(rule => (
+                        <div key={rule.id} className="flex items-center text-xs">
+                          <div className="i-ph:check-circle text-green-500 mr-1" />
+                          <span className="text-bolt-elements-textPrimary truncate">{rule.label}</span>
+                          {rule.priority && (
+                            <span className="ml-1 text-xs text-bolt-elements-textTertiary">(P{rule.priority})</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
-                styles={{
-                  ...selectStyles,
-                  menu: (base) => ({
-                    ...base,
-                    backgroundColor: 'var(--bolt-elements-background-depth-1)',
-                    border: '1px solid var(--bolt-elements-borderColor)',
-                    boxShadow: 'var(--bolt-elements-shadow-md)',
-                    overflow: 'hidden',
-                    zIndex: 50,
-                    borderRadius: '0.5rem',
-                    marginTop: '4px',
-                    padding: '2px',
-                  }),
-                  menuList: (base) => ({
-                    ...base,
-                    padding: '6px',
-                    backgroundColor: 'var(--bolt-elements-background-depth-1)',
-                    '&::-webkit-scrollbar': {
-                      width: '8px',
-                      height: '8px',
-                    },
-                    '&::-webkit-scrollbar-track': {
-                      background: 'var(--bolt-elements-background-depth-2)',
-                      borderRadius: '4px',
-                    },
-                    '&::-webkit-scrollbar-thumb': {
-                      background: 'var(--bolt-purple-400-20)',
-                      borderRadius: '4px',
-                      '&:hover': {
-                        background: 'var(--bolt-purple-400-30)',
-                      },
-                    },
-                  }),
-                  multiValueRemove: (base) => ({
-                    ...base,
-                    color: 'var(--bolt-red-400)',
-                    cursor: 'pointer',
-                    backgroundColor: 'transparent',
-                    '&:hover': {
-                      backgroundColor: 'var(--bolt-red-400-20)',
-                      color: 'var(--bolt-red-300)',
-                    },
-                    borderRadius: '0 0.375rem 0.375rem 0',
-                    padding: '0 4px',
-                    transition: 'all 150ms ease',
-                  }),
-                  multiValue: (base) => ({
-                    ...base,
-                    backgroundColor: 'var(--bolt-purple-500-10)',
-                    borderRadius: '0.375rem',
-                    border: '1px solid var(--bolt-purple-400-40)',
-                    padding: '1px 2px',
-                    margin: '2px',
-                    boxShadow: 'var(--bolt-elements-shadow-sm)',
-                    '&:hover': {
-                      backgroundColor: 'var(--bolt-purple-400-15)',
-                      border: '1px solid var(--bolt-purple-300)',
-                    },
-                  }),
-                  clearIndicator: (base) => ({
-                    ...base,
-                    color: 'var(--bolt-elements-textTertiary)',
-                    cursor: 'pointer',
-                    '&:hover': {
-                      color: 'var(--bolt-red-400)',
-                      backgroundColor: 'var(--bolt-red-400-10)',
-                    },
-                    padding: '2px 8px',
-                    transition: 'all 150ms ease',
-                    borderRadius: '0.25rem',
-                  }),
-                  option: (base, state) => ({
-                    ...base,
-                    backgroundColor: state.isFocused 
-                      ? 'var(--bolt-purple-500-15)' 
-                      : state.isSelected
-                      ? 'var(--bolt-purple-500-25)'
-                      : 'var(--bolt-elements-background-depth-2)',
-                    color: state.isSelected 
-                      ? 'var(--bolt-purple-300)' 
-                      : 'var(--bolt-elements-textPrimary)',
-                    padding: '8px 12px',
-                    borderRadius: '0.375rem',
-                    cursor: 'pointer',
-                    fontSize: '0.875rem',
-                    fontWeight: 500,
-                    marginBottom: '2px',
-                    '&:active': {
-                      backgroundColor: 'var(--bolt-purple-500-30)',
-                      color: 'var(--bolt-purple-200)',
-                    },
-                    '&:hover': {
-                      backgroundColor: 'var(--bolt-purple-400-20)',
-                      color: 'var(--bolt-purple-300)',
-                      borderColor: 'var(--bolt-purple-300)',
-                    },
-                    transition: 'all 150ms ease',
-                  }),
-                }}
-                theme={(theme) => ({
-                  ...theme,
-                  colors: {
-                    ...theme.colors,
-                    primary: 'var(--bolt-purple-400)',
-                    primary75: 'var(--bolt-purple-300)',
-                    primary50: 'var(--bolt-purple-200)',
-                    primary25: 'var(--bolt-purple-100)',
-                    neutral0: 'var(--bolt-elements-background-depth-1)',
-                    neutral5: 'var(--bolt-elements-background-depth-2)',
-                    neutral10: 'var(--bolt-elements-background-depth-2)',
-                    neutral20: 'var(--bolt-elements-borderColor)',
-                    neutral30: 'var(--bolt-elements-borderColor)',
-                    neutral40: 'var(--bolt-elements-textTertiary)',
-                    neutral50: 'var(--bolt-elements-textSecondary)',
-                    neutral60: 'var(--bolt-elements-textSecondary)',
-                    neutral70: 'var(--bolt-elements-textPrimary)',
-                    neutral80: 'var(--bolt-elements-textPrimary)',
-                    neutral90: 'var(--bolt-elements-textPrimary)',
-                    danger: 'var(--bolt-red-400)',
-                    dangerLight: 'var(--bolt-red-500-20)',
-                  },
-                  spacing: {
-                    ...theme.spacing,
-                    baseUnit: 4,
-                    controlHeight: 40,
-                    menuGutter: 4,
-                  },
-                  borderRadius: 8,
-                })}
-                components={{
-                  DropdownIndicator: (props) => (
-                    <components.DropdownIndicator {...props}>
-                      <div className="i-ph:caret-down w-4 h-4 text-purple-400 dark:text-purple-300 group-hover:text-purple-300 dark:group-hover:text-purple-200" />
-                    </components.DropdownIndicator>
-                  ),
-                  ClearIndicator: (props) => (
-                    <components.ClearIndicator {...props}>
-                      <div className="i-ph:x w-4 h-4 text-bolt-red-400 hover:text-bolt-red-300 dark:text-bolt-red-300 dark:hover:text-bolt-red-200" />
-                    </components.ClearIndicator>
-                  ),
-                  MultiValueLabel: (props) => (
-                    <components.MultiValueLabel {...props}>
-                      <div className="flex items-center px-1">
-                        <div className="i-ph:book-open-text w-3 h-3 mr-1.5 text-purple-500 dark:text-purple-300" />
-                        <span className="text-sm font-medium text-purple-800 dark:text-purple-100">{props.data.label}</span>
-                      </div>
-                    </components.MultiValueLabel>
-                  ),
-                  MultiValueRemove: (props) => (
-                    <components.MultiValueRemove {...props}>
-                      <div className="i-ph:x w-3.5 h-3.5 text-bolt-red-400 hover:text-bolt-red-300 dark:text-bolt-red-300 dark:hover:text-bolt-red-200 p-0.5" />
-                    </components.MultiValueRemove>
-                  ),
-                  ValueContainer: (props) => {
-                    const shouldShowSelected = allPromptOptions.length > 0 && selectedValues.length > 0;
-                    
-                    return (
-                      <components.ValueContainer {...props}>
-                        {shouldShowSelected ? props.children : 
-                          <div className="text-bolt-elements-textSecondary">No prompts available</div>
-                        }
-                      </components.ValueContainer>
-                    );
-                  },
-                }}
-              />
-            </div>
+              </div>
+            )}
           </div>
         </div>
       </motion.div>

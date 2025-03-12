@@ -86,14 +86,11 @@ const TAB_DESCRIPTIONS: Record<TabType, string> = {
 };
 
 // Beta status for experimental features
-const BETA_TABS = new Set<TabType>(['task-manager', 'service-status', 'update', 'local-providers', 'prompt-library']);
+const BETA_TABS = new Set<TabType>(['task-manager', 'service-status', 'update', 'local-providers']);
 
 const BetaLabel = () => (
-  <div className="absolute top-2 right-2 px-2 py-0.5 rounded-md bg-gradient-to-r from-purple-500/20 to-blue-500/20 dark:from-purple-500/30 dark:to-blue-500/30 backdrop-blur-sm shadow-sm border border-purple-500/10 dark:border-purple-500/20">
-    <div className="flex items-center space-x-1">
-      <div className="i-ph:sparkle-fill w-3 h-3 text-purple-500 dark:text-purple-400" />
-      <span className="text-[10px] font-semibold tracking-wider text-purple-600 dark:text-purple-300">BETA</span>
-    </div>
+  <div className="absolute top-2 right-2 px-1.5 py-0.5 rounded-full bg-purple-500/10 dark:bg-purple-500/20">
+    <span className="text-[10px] font-medium text-purple-600 dark:text-purple-400">BETA</span>
   </div>
 );
 

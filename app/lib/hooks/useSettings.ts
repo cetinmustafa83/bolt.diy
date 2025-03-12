@@ -3,7 +3,6 @@ import {
   isDebugMode,
   isEventLogsEnabled,
   promptStore,
-  activePromptsStore,
   providersStore,
   latestBranchStore,
   autoSelectStarterTemplate,
@@ -17,7 +16,6 @@ import {
   updateContextOptimization,
   updateEventLogs,
   updatePromptId,
-  updateActivePrompts,
 } from '~/lib/stores/settings';
 import { useCallback, useEffect, useState } from 'react';
 import Cookies from 'js-cookie';
@@ -55,8 +53,6 @@ export interface UseSettingsReturn {
   eventLogs: boolean;
   promptId: string;
   setPromptId: (promptId: string) => void;
-  activePrompts: string[];
-  setActivePrompts: (prompts: string[]) => void;
   isLatestBranch: boolean;
   enableLatestBranch: (enabled: boolean) => void;
   autoSelectTemplate: boolean;
@@ -80,7 +76,6 @@ export function useSettings(): UseSettingsReturn {
   const debug = useStore(isDebugMode);
   const eventLogs = useStore(isEventLogsEnabled);
   const promptId = useStore(promptStore);
-  const activePrompts = useStore(activePromptsStore);
   const isLatestBranch = useStore(latestBranchStore);
   const autoSelectTemplate = useStore(autoSelectStarterTemplate);
   const [activeProviders, setActiveProviders] = useState<ProviderInfo[]>([]);
@@ -133,11 +128,6 @@ export function useSettings(): UseSettingsReturn {
   const setPromptId = useCallback((id: string) => {
     updatePromptId(id);
     logStore.logSystem(`Prompt template updated to ${id}`);
-  }, []);
-
-  const setActivePrompts = useCallback((prompts: string[]) => {
-    updateActivePrompts(prompts);
-    logStore.logSystem(`Active prompts updated: ${prompts.join(', ')}`);
   }, []);
 
   const enableLatestBranch = useCallback((enabled: boolean) => {
@@ -203,8 +193,6 @@ export function useSettings(): UseSettingsReturn {
     setEventLogs,
     promptId,
     setPromptId,
-    activePrompts,
-    setActivePrompts,
     isLatestBranch,
     enableLatestBranch,
     autoSelectTemplate,

@@ -15,9 +15,6 @@ import { SendButton } from './SendButton.client';
 import { APIKeyManager, getApiKeysFromCookies } from './APIKeyManager';
 import Cookies from 'js-cookie';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { motion, AnimatePresence } from 'framer-motion';
-import { useStore } from '@nanostores/react';
-import { profileStore } from '~/lib/stores/profile';
 
 import styles from './BaseChat.module.scss';
 import { ExportChatButton } from '~/components/chat/chatExportAndImport/ExportChatButton';
@@ -122,9 +119,6 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
     const [transcript, setTranscript] = useState('');
     const [isModelLoading, setIsModelLoading] = useState<string | undefined>('all');
     const [progressAnnotations, setProgressAnnotations] = useState<ProgressAnnotation[]>([]);
-    const profile = useStore(profileStore);
-    const [showWelcome, setShowWelcome] = useState(true);
-
     useEffect(() => {
       if (data) {
         const progressList = data.filter(
@@ -200,14 +194,6 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
           });
       }
     }, [providerList, provider]);
-
-    useEffect(() => {
-      const timer = setTimeout(() => {
-        setShowWelcome(false);
-      }, 4000); // 4 seconds
-
-      return () => clearTimeout(timer);
-    }, []);
 
     const onApiKeysChange = async (providerName: string, apiKey: string) => {
       const newApiKeys = { ...apiKeys, [providerName]: apiKey };
@@ -331,28 +317,9 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
           <div className={classNames(styles.Chat, 'flex flex-col flex-grow lg:min-w-[var(--chat-min-width)] h-full')}>
             {!chatStarted && (
               <div id="intro" className="mt-[16vh] max-w-chat mx-auto text-center px-4 lg:px-0">
-                <AnimatePresence mode="wait">
-                  {showWelcome ? (
-                    <motion.h1
-                      key="welcome"
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -20 }}
-                      className="text-3xl lg:text-6xl font-bold text-bolt-elements-textPrimary mb-4"
-                    >
-                      Welcome, {profile?.username || 'Guest'}
-                    </motion.h1>
-                  ) : (
-                    <motion.h1
-                      key="ideas"
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="text-3xl lg:text-6xl font-bold text-bolt-elements-textPrimary mb-4"
-                    >
-                      Where ideas begin
-                    </motion.h1>
-                  )}
-                </AnimatePresence>
+                <h1 className="text-3xl lg:text-6xl font-bold text-bolt-elements-textPrimary mb-4 animate-fade-in">
+                  Where ideas begin
+                </h1>
                 <p className="text-md lg:text-xl mb-8 text-bolt-elements-textSecondary animate-fade-in animation-delay-200">
                   Bring ideas to life in seconds or get help on existing projects.
                 </p>
@@ -642,6 +609,7 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
 
                   handleSendMessage?.(event, messageInput);
                 })}
+              {!chatStarted && <StarterTemplates />}
             </div>
           </div>
           <ClientOnly>

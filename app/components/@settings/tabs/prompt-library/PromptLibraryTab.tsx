@@ -8,7 +8,7 @@ import { Switch } from '~/components/ui/Switch';
 import { ScrollArea } from '~/components/ui/ScrollArea';
 import { useSettings } from '~/lib/hooks/useSettings';
 import { logStore } from '~/lib/stores/logs';
-import { UrlImportForm } from '~/components/UrlImportForm';
+import UrlPromptsManager from './UrlPromptsManager';
 
 interface PromptFormData {
   label: string;
@@ -19,20 +19,19 @@ interface PromptFormData {
 
 export default function PromptLibraryTab() {
   // Tab state
-  const [activeTab, setActiveTab] = useState<'prompts' | 'rules'>('prompts');
+  const [activeTab, setActiveTab] = useState<'prompts' | 'rules' | 'sources'>('prompts');
   
   // Category Management modal state
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [showAddCategoryForm, setShowAddCategoryForm] = useState(false);
   const [editingCategory, setEditingCategory] = useState<{ original: string; new: string } | null>(null);
   
-  const { promptId, setPromptId, activePrompts, setActivePrompts } = useSettings();
+  const { promptId, setPromptId } = useSettings();
   const [customPrompts, setCustomPrompts] = useState<CustomPrompt[]>([]);
-  const [systemPrompts, setSystemPrompts] = useState<CustomPrompt[]>([]);
+  const [systemPrompts, setSystemPrompts] = useState<{id: string; label: string; description: string; category: string}[]>([]);
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showViewDialog, setShowViewDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
-  const [showImportDialog, setShowImportDialog] = useState(false);
   const [selectedPrompt, setSelectedPrompt] = useState<CustomPrompt | null>(null);
   const [deletePromptId, setDeletePromptId] = useState<string | null>(null);
   const [formData, setFormData] = useState<PromptFormData>({
@@ -52,125 +51,53 @@ export default function PromptLibraryTab() {
     content: '',
     category: '',
   });
+  const [showNewCategoryInput, setShowNewCategoryInput] = useState(false);
 
   // Load prompts on mount
   useEffect(() => {
-    const initializePrompts = async () => {
-      try {
-        // First check if the rule exists
-        const customPromptsData = await PromptLibrary.getCustomPrompts();
-        const existingRule = customPromptsData.find(p => p.id === 'rule_typescript_guidelines');
-        
-        // If rule doesn't exist, add it silently without toast messages
-        if (!existingRule) {
-          const guidelinesContent = `# TypeScript Project Guidelines
-
-## Project Structure
-- Use a clear and consistent directory structure
-- Separate source code (src/) from build output (dist/)
-- Keep related files together in feature-based directories
-- Use meaningful file names that reflect their purpose
-
-## TypeScript Configuration
-- Maintain a strict tsconfig.json
-- Enable strict type checking
-- Use project references for large codebases
-- Configure module resolution strategy
-- Set appropriate target ECMAScript version`;
-
-          const newRule = await PromptLibrary.addCustomPrompt({
-            id: 'rule_typescript_guidelines',
-            label: 'TypeScript Project - Project Guidelines',
-            description: 'Essential guidelines and best practices for TypeScript projects',
-            content: guidelinesContent,
-            category: 'Development'
-          });
-        }
-        
-        await loadPrompts();
-      } catch (error) {
-        console.error('Error initializing prompts:', error);
-        toast.error('Failed to initialize prompts');
-      }
-    };
-
-    initializePrompts();
+    loadPrompts();
   }, []);
 
   // Load and process prompts
-  const loadPrompts = async () => {
+  const loadPrompts = () => {
     try {
-      // Burada getList() boş bir dizi döndürüyor (SYSTEM_PROMPTS boş)
-      // Bunun yerine library'deki sistem promptlarını alıyoruz
-      const systemPromptsFromLibrary = Object.entries(PromptLibrary.library).map(([id, prompt]) => ({
-        id,
-        label: prompt.label,
-        description: prompt.description,
-        content: "System prompt content not directly accessible", // İçerik bir fonksiyon olduğu için doğrudan görüntüleyemiyoruz
-        category: "System",
-        isSystem: true
-      }));
+      // Get system prompts
+      const system = PromptLibrary.getList();
+      setSystemPrompts(system);
       
-      setSystemPrompts(systemPromptsFromLibrary);
+      // Get custom prompts using sync method
+      const custom = PromptLibrary.getCustomPromptsSync();
+      setCustomPrompts(custom);
       
-      const customPromptsData = await PromptLibrary.getCustomPrompts();
-      setCustomPrompts(customPromptsData);
-      
-      const allCategories = await PromptLibrary.getCategories();
-      // Sistem kategoriyi ekleyelim
-      if (!allCategories.includes("System")) {
-        allCategories.push("System");
-      }
-      setCategories(allCategories);
+      // Get categories using sync method
+      const categories = PromptLibrary.getCategoriesSync();
+      setCategories(categories);
 
-      // Initialize prompt states from active prompts
+      // Initialize prompt states
       const states: Record<string, boolean> = {};
-      const allPrompts = [...systemPromptsFromLibrary, ...customPromptsData];
-      
-      // Sistem promptları varsayılan olarak aktif olsun
-      // ve varolan aktif promptları da ekleyelim
-      const defaultActivePrompts = [
-        ...systemPromptsFromLibrary.map(p => p.id), // Tüm sistem promptları aktif
-        ...activePrompts.filter(id => customPromptsData.some(p => p.id === id)) // Önceden seçilmiş özel promptlar
-      ];
-      
-      // Tekrarlanan ID'leri temizle
-      const uniqueActivePrompts = [...new Set(defaultActivePrompts)];
-      
-      // Only track state for prompts that actually exist
-      const validActivePrompts = uniqueActivePrompts.filter(id => 
-        allPrompts.some(prompt => prompt.id === id)
-      );
-      
-      // Update active prompts if they changed
-      if (JSON.stringify(validActivePrompts.sort()) !== JSON.stringify(activePrompts.sort())) {
-        setActivePrompts(validActivePrompts);
-      }
-      
-      // Set state only for prompts that exist
-      allPrompts.forEach((prompt: CustomPrompt) => {
-        // Sistem promptları her zaman aktif
-        states[prompt.id] = prompt.isSystem ? true : validActivePrompts.includes(prompt.id);
+      [...system, ...custom].forEach(prompt => {
+        states[prompt.id] = prompt.id === promptId;
       });
-      
       setPromptStates(states);
     } catch (error) {
       console.error('Error loading prompts:', error);
-      toast.error('Failed to load prompts');
+      // Fallback to empty arrays if there's an error
+      setCustomPrompts([]);
+      setCategories([]);
     }
   };
 
   // Filter prompts by category
   const getFilteredPrompts = () => {
     const filtered = {
-      system: systemPrompts.filter((p: CustomPrompt) => !activeCategory || p.category === activeCategory),
-      custom: customPrompts.filter((p: CustomPrompt) => !activeCategory || p.category === activeCategory)
+      system: systemPrompts.filter(p => !activeCategory || p.category === activeCategory),
+      custom: customPrompts.filter(p => !activeCategory || p.category === activeCategory)
     };
     return filtered;
   };
 
   // Handle adding a new category
-  const handleAddCategory = async () => {
+  const handleAddCategory = () => {
     if (!customCategory.trim()) {
       toast.error('Category name is required');
       return;
@@ -181,27 +108,22 @@ export default function PromptLibraryTab() {
       return;
     }
 
-    try {
-      // Adding a category by creating a temporary prompt with this category
-      // The category will be saved in localStorage and appear in the categories list
-      const tempPrompt = await PromptLibrary.addCustomPrompt({
-        label: `__temp_${Date.now()}`,
-        description: 'Temporary prompt for category creation',
-        content: 'This is a temporary prompt to create a new category.',
-        category: customCategory.trim(),
-      });
+    // Adding a category by creating a temporary prompt with this category
+    // The category will be saved in localStorage and appear in the categories list
+    const tempPrompt = PromptLibrary.addCustomPrompt({
+      label: `__temp_${Date.now()}`,
+      description: 'Temporary prompt for category creation',
+      content: 'This is a temporary prompt to create a new category.',
+      category: customCategory.trim(),
+    });
 
-      // Delete the temporary prompt immediately
-      await PromptLibrary.deleteCustomPrompt(tempPrompt.id);
-      
-      logStore.logSystem(`Added new category: ${customCategory}`);
-      toast.success('Category added successfully');
-      setCustomCategory('');
-      await loadPrompts();
-    } catch (error) {
-      console.error('Error adding category:', error);
-      toast.error('Failed to add category');
-    }
+    // Delete the temporary prompt immediately
+    PromptLibrary.deleteCustomPrompt(tempPrompt.id);
+    
+    logStore.logSystem(`Added new category: ${customCategory}`);
+    toast.success('Category added successfully');
+    setCustomCategory('');
+    loadPrompts();
   };
 
   // Handle editing a category
@@ -213,7 +135,7 @@ export default function PromptLibraryTab() {
   };
 
   // Save edited category
-  const handleSaveEditedCategory = async () => {
+  const handleSaveEditedCategory = () => {
     if (!editingCategory) return;
     
     if (!editingCategory.new.trim()) {
@@ -226,128 +148,107 @@ export default function PromptLibraryTab() {
       return;
     }
 
-    try {
-      // Update all prompts with the old category to use the new category
-      const prompts = await PromptLibrary.getCustomPrompts();
-      
-      await Promise.all(prompts.map(async (prompt: CustomPrompt) => {
-        if (prompt.category === editingCategory.original) {
-          await PromptLibrary.updateCustomPrompt(prompt.id, {
-            ...prompt,
-            category: editingCategory.new.trim()
-          });
-        }
-      }));
+    // Update all prompts with the old category to use the new category
+    const custom = PromptLibrary.getCustomPrompts();
+    custom.forEach(prompt => {
+      if (prompt.category === editingCategory.original) {
+        PromptLibrary.updateCustomPrompt(prompt.id, {
+          ...prompt,
+          category: editingCategory.new.trim()
+        });
+      }
+    });
 
-      logStore.logSystem(`Renamed category: ${editingCategory.original} to ${editingCategory.new}`);
-      toast.success('Category updated successfully');
-      setEditingCategory(null);
-      await loadPrompts();
-    } catch (error) {
-      console.error('Error updating category:', error);
-      toast.error('Failed to update category');
-    }
+    logStore.logSystem(`Renamed category: ${editingCategory.original} to ${editingCategory.new}`);
+    toast.success('Category updated successfully');
+    setEditingCategory(null);
+    loadPrompts();
   };
 
   // Handle deleting a category
-  const handleDeleteCategory = async (categoryToDelete: string) => {
+  const handleDeleteCategory = (categoryToDelete: string) => {
     // Confirm before deleting
     if (!window.confirm(`Are you sure you want to delete the category "${categoryToDelete}"? \nItems will not be deleted but will lose this category.`)) {
       return;
     }
 
-    try {
-      // Find all prompts with this category and update them to "Custom"
-      const prompts = await PromptLibrary.getCustomPrompts();
-      let updatedCount = 0;
-      
-      await Promise.all(prompts.map(async (prompt: CustomPrompt) => {
-        if (prompt.category === categoryToDelete) {
-          await PromptLibrary.updateCustomPrompt(prompt.id, {
-            ...prompt,
-            category: 'Custom'
-          });
-          updatedCount++;
-        }
-      }));
-
-      logStore.logSystem(`Deleted category: ${categoryToDelete} (${updatedCount} items updated)`);
-      toast.success(`Category deleted successfully. ${updatedCount} ${updatedCount === 1 ? 'item' : 'items'} moved to "Custom" category.`);
-      
-      if (activeCategory === categoryToDelete) {
-        setActiveCategory(null);
+    // Find all prompts with this category and update them to "Custom"
+    const custom = PromptLibrary.getCustomPrompts();
+    let updatedCount = 0;
+    
+    custom.forEach(prompt => {
+      if (prompt.category === categoryToDelete) {
+        PromptLibrary.updateCustomPrompt(prompt.id, {
+          ...prompt,
+          category: 'Custom'
+        });
+        updatedCount++;
       }
-      
-      await loadPrompts();
-    } catch (error) {
-      console.error('Error deleting category:', error);
-      toast.error('Failed to delete category');
+    });
+
+    logStore.logSystem(`Deleted category: ${categoryToDelete} (${updatedCount} items updated)`);
+    toast.success(`Category deleted successfully. ${updatedCount} ${updatedCount === 1 ? 'item' : 'items'} moved to "Custom" category.`);
+    
+    if (activeCategory === categoryToDelete) {
+      setActiveCategory(null);
     }
+    
+    loadPrompts();
   };
 
   // Handle clearing all custom categories
-  const handleClearCustomCategories = async () => {
+  const handleClearCustomCategories = () => {
     if (!window.confirm('Are you sure you want to remove all custom categories? All custom prompts will be moved to the "Custom" category.')) {
       return;
     }
 
-    try {
-      // Find all custom prompts and set their category to "Custom"
-      const prompts = await PromptLibrary.getCustomPrompts();
-      let updatedCount = 0;
+    // Find all custom prompts and set their category to "Custom"
+    const custom = PromptLibrary.getCustomPrompts();
+    let updatedCount = 0;
+    
+    custom.forEach(prompt => {
+      const isSystemCategory = ['Development', 'Writing', 'Business', 'Education', 'Custom'].includes(prompt.category);
       
-      await Promise.all(prompts.map(async (prompt: CustomPrompt) => {
-        const isSystemCategory = ['Development', 'Writing', 'Business', 'Education', 'Custom'].includes(prompt.category);
-        
-        if (!isSystemCategory) {
-          await PromptLibrary.updateCustomPrompt(prompt.id, {
-            ...prompt,
-            category: 'Custom'
-          });
-          updatedCount++;
-        }
-      }));
+      if (!isSystemCategory) {
+        PromptLibrary.updateCustomPrompt(prompt.id, {
+          ...prompt,
+          category: 'Custom'
+        });
+        updatedCount++;
+      }
+    });
 
-      logStore.logSystem(`Cleared all custom categories (${updatedCount} prompts updated)`);
-      toast.success(`All custom categories deleted. ${updatedCount} ${updatedCount === 1 ? 'prompt' : 'prompts'} moved to "Custom" category.`);
-      
-      setActiveCategory(null);
-      await loadPrompts();
-    } catch (error) {
-      console.error('Error clearing custom categories:', error);
-      toast.error('Failed to clear custom categories');
-    }
+    logStore.logSystem(`Cleared all custom categories (${updatedCount} prompts updated)`);
+    toast.success(`All custom categories deleted. ${updatedCount} ${updatedCount === 1 ? 'prompt' : 'prompts'} moved to "Custom" category.`);
+    
+    setActiveCategory(null);
+    loadPrompts();
   };
 
   // Handle clearing all custom prompts/rules
-  const handleClearCustomContent = async () => {
+  const handleClearCustomContent = () => {
     if (!window.confirm(`Are you sure you want to delete ALL custom items? This cannot be undone.`)) {
       return;
     }
 
-    try {
-      // Get all custom prompts and delete them
-      const prompts = await PromptLibrary.getCustomPrompts();
-      let deletedCount = 0;
-      
-      await Promise.all(prompts.map(async (prompt: CustomPrompt) => {
-        await PromptLibrary.deleteCustomPrompt(prompt.id);
-        deletedCount++;
-      }));
+    // Get all custom prompts and delete them
+    const custom = PromptLibrary.getCustomPrompts();
+    let deletedCount = 0;
+    
+    custom.forEach(prompt => {
+      PromptLibrary.deleteCustomPrompt(prompt.id);
+      deletedCount++;
+    });
 
-      // Reset to default prompt if the current one was deleted
-      if (promptId !== 'default' && !systemPrompts.find(p => p.id === promptId)) {
-        setPromptId('default');
-      }
-
-      logStore.logSystem(`Cleared all custom items (${deletedCount} items deleted)`);
-      toast.success(`All custom items deleted successfully.`);
-      
-      await loadPrompts();
-    } catch (error) {
-      console.error('Error clearing custom content:', error);
-      toast.error('Failed to clear custom content');
+    // Reset to default prompt if the current one was deleted
+    if (promptId !== 'default' && !systemPrompts.find(p => p.id === promptId)) {
+      setPromptId('default');
     }
+
+    logStore.logSystem(`Cleared all custom items (${deletedCount} items deleted)`);
+    toast.success(`All custom items deleted successfully.`);
+    
+    loadPrompts();
   };
 
   // Handle adding item
@@ -370,15 +271,17 @@ export default function PromptLibraryTab() {
         return;
       }
 
-      const newPromptData = await PromptLibrary.addCustomPrompt({
+      // Initialize if not initialized
+      await PromptLibrary.initialize();
+
+      const newPrompt = await PromptLibrary.addCustomPrompt({
         label: formData.label.trim(),
         description: formData.description.trim() || 'No description provided',
         content: formData.content.trim(),
         category: category.trim(),
-        id: activeTab === 'rules' ? `rule_${Date.now()}` : undefined
       });
 
-      logStore.logSystem(`Added new item: ${newPromptData.label}`);
+      logStore.logSystem(`Added new item: ${newPrompt.label}`);
 
       setFormData({
         label: '',
@@ -388,15 +291,16 @@ export default function PromptLibraryTab() {
       });
       setCustomCategory('');
       setShowAddDialog(false);
-      await loadPrompts();
-      toast.success('Item added successfully');
+
+      // Reload prompts
+      loadPrompts();
     } catch (error) {
       console.error('Error adding item:', error);
       toast.error('Failed to add item');
     }
   };
 
-  const handleConfirmDelete = async () => {
+  const handleConfirmDelete = () => {
     try {
       if (!deletePromptId) return;
       
@@ -409,59 +313,39 @@ export default function PromptLibraryTab() {
 
       if (deletePromptId === promptId) {
         setPromptId('default');
-        toast.info('Switched to default item as the current one was deleted');
+        toast.info('Switched to default item as the current item was deleted');
       }
 
-      await PromptLibrary.deleteCustomPrompt(deletePromptId);
+      PromptLibrary.deleteCustomPrompt(deletePromptId);
       logStore.logSystem(`Deleted item: ${promptToDelete.label}`);
       
       setDeletePromptId(null);
       setShowDeleteDialog(false);
-      await loadPrompts(); // Reload prompts after deletion
+      loadPrompts();
       
-      const itemType = promptToDelete.id.startsWith('rule_') ? 'Rule' : 'Prompt';
-      toast.success(`${itemType} deleted: ${promptToDelete.label}`);
+      toast.success('Item deleted successfully');
     } catch (error) {
       console.error('Error deleting item:', error);
       toast.error('Failed to delete item');
     }
   };
 
-  const handleTogglePromptState = async (id: string) => {
-    try {
-      // Eğer bu bir sistem promptuysa değiştirilmesine izin verme
-      const isSystemPrompt = systemPrompts.some(p => p.id === id);
-      if (isSystemPrompt) {
-        toast.info('System prompts are always active and cannot be deactivated.');
-        return;
+  const handleTogglePromptState = (id: string) => {
+    setPromptStates(prev => {
+      const newStates = { ...prev, [id]: !prev[id] };
+      if (newStates[id]) {
+        setPromptId(id);
+        toast.success('Item activated successfully');
+      } else if (id === promptId) {
+        setPromptId('default');
+        toast.info('Switched to default item');
       }
-      
-      const newState = !promptStates[id];
-      
-      // Update the state in IndexedDB
-      await PromptLibrary.setPromptStatus(id, newState);
-      
-      // Update local state
-      setPromptStates(prev => {
-        const newStates = { ...prev, [id]: newState };
-        
-        if (newState) {
-          setActivePrompts([...activePrompts, id]);
-          toast.success('Item activated successfully');
-        } else {
-          setActivePrompts(activePrompts.filter(promptId => promptId !== id));
-          toast.success('Item deactivated successfully');
-        }
-        return newStates;
-      });
-    } catch (error) {
-      console.error('Error toggling prompt state:', error);
-      toast.error('Failed to update item status');
-    }
+      return newStates;
+    });
   };
 
   // Handle editing prompt
-  const handleEditPrompt = async () => {
+  const handleEditPrompt = () => {
     try {
       if (!selectedPrompt) return;
 
@@ -475,7 +359,7 @@ export default function PromptLibraryTab() {
         return;
       }
 
-      await PromptLibrary.updateCustomPrompt(selectedPrompt.id, {
+      PromptLibrary.updateCustomPrompt(selectedPrompt.id, {
         label: editFormData.label.trim(),
         description: editFormData.description.trim() || 'No description provided',
         content: editFormData.content.trim(),
@@ -486,10 +370,9 @@ export default function PromptLibraryTab() {
       
       setIsEditing(false);
       setShowViewDialog(false);
-      await loadPrompts(); // Reload prompts after update
-      
-      const itemType = selectedPrompt.id.startsWith('rule_') ? 'Rule' : 'Prompt';
-      toast.success(`${itemType} updated: ${editFormData.label}`);
+      setShowNewCategoryInput(false);
+      loadPrompts();
+      toast.success('Item updated successfully');
     } catch (error) {
       console.error('Error updating item:', error);
       toast.error('Failed to update item');
@@ -500,10 +383,10 @@ export default function PromptLibraryTab() {
   useEffect(() => {
     if (selectedPrompt) {
       setEditFormData({
-        label: selectedPrompt.label || '',
-        description: selectedPrompt.description || '',
-        content: selectedPrompt.content || '',
-        category: selectedPrompt.category || 'Custom',
+        label: selectedPrompt.label,
+        description: selectedPrompt.description,
+        content: selectedPrompt.content,
+        category: selectedPrompt.category,
       });
     }
   }, [selectedPrompt]);
@@ -511,180 +394,168 @@ export default function PromptLibraryTab() {
   const filteredPrompts = getFilteredPrompts();
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between mb-4">
-        {/* Tab Buttons */}
-        <div className="flex space-x-2">
-          <button
-            className={classNames(
-              'px-4 py-2 text-sm font-medium rounded-md transition-colors duration-200',
-              activeTab === 'prompts'
-                ? 'bg-purple-500 text-white shadow-sm hover:bg-purple-600'
-                : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-200 dark:border-[#333] dark:bg-[#1A1A1A] dark:text-gray-300 dark:hover:bg-[#252525]'
-            )}
-            onClick={() => setActiveTab('prompts')}
-          >
-            <div className="flex items-center gap-1.5">
-              <div className="i-ph:book-open w-4 h-4" />
-              Prompts
-            </div>
-          </button>
-          <button
-            className={classNames(
-              'px-4 py-2 text-sm font-medium rounded-md transition-colors duration-200',
-              activeTab === 'rules'
-                ? 'bg-purple-500 text-white shadow-sm hover:bg-purple-600'
-                : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-200 dark:border-[#333] dark:bg-[#1A1A1A] dark:text-gray-300 dark:hover:bg-[#252525]'
-            )}
-            onClick={() => setActiveTab('rules')}
-          >
-            <div className="flex items-center gap-1.5">
-              <div className="i-ph:ruler w-4 h-4" />
-              Rules
-            </div>
-          </button>
-        </div>
-        <div className="flex space-x-2">
-          <button
-            className="px-4 py-2 text-sm font-medium text-white bg-purple-500 hover:bg-purple-600 rounded-md shadow-sm transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-purple-500/30"
-            onClick={() => setShowAddDialog(true)}
-          >
-            Add New
-          </button>
-          <button
-            className="px-4 py-2 text-sm font-medium text-white bg-purple-500 hover:bg-purple-600 rounded-md shadow-sm transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-purple-500/30"
-            onClick={() => setShowImportDialog(true)}
-          >
-            Import from URL
-          </button>
-          <button
-            className="px-4 py-2 text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 rounded-md shadow-sm border border-gray-200 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-purple-500/30 dark:bg-[#1A1A1A] dark:text-gray-300 dark:border-[#333] dark:hover:bg-[#252525]"
-            onClick={() => setShowCategoryModal(true)}
-          >
-            Manage Categories
-          </button>
-        </div>
+    <div className="space-y-6 bg-transparent">
+      {/* Tabs */}
+      <div className="flex border-b border-gray-200 dark:border-[#333] bg-transparent">
+        <button
+          onClick={() => setActiveTab('prompts')}
+          className={classNames(
+            "px-4 py-2 text-sm font-medium focus:outline-none bg-transparent",
+            activeTab === 'prompts'
+              ? 'text-purple-600 dark:text-purple-400 border-b-2 border-purple-500'
+              : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+          )}
+        >
+          Prompts
+        </button>
+        <button
+          onClick={() => setActiveTab('sources')}
+          className={classNames(
+            "px-4 py-2 text-sm font-medium focus:outline-none bg-transparent",
+            activeTab === 'sources'
+              ? 'text-purple-600 dark:text-purple-400 border-b-2 border-purple-500'
+              : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+          )}
+        >
+          URL Sources
+        </button>
+        <button
+          onClick={() => setActiveTab('rules')}
+          className={classNames(
+            "px-4 py-2 text-sm font-medium focus:outline-none bg-transparent",
+            activeTab === 'rules'
+              ? 'text-purple-600 dark:text-purple-400 border-b-2 border-purple-500'
+              : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+          )}
+        >
+          Rules
+        </button>
       </div>
       
-      {/* Prompt Library Content */}
-      <div role="tabpanel" className="focus:outline-none bg-transparent">
-        <div className="bg-transparent">
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.2 }}
-            className="bg-transparent"
-          >
-            {/* Prompts/Rules Table */}
-            <div className="relative overflow-hidden rounded-lg border border-gray-200 dark:border-[#333] bg-transparent dark:bg-transparent mt-4">
-              <div className="px-4 py-3 border-b border-gray-200 dark:border-[#333] bg-gray-50/50 dark:bg-[#1A1A1A]/50">
-                <div className="flex items-center gap-2">
-                  <div className="i-ph:info w-4 h-4 text-purple-500" />
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
-                    You can select multiple {activeTab === 'prompts' ? 'prompts' : 'rules'} to use in your workspace. Use the toggles to activate or deactivate them.
-                  </p>
+      {/* Prompt Tab Content */}
+      {activeTab === 'prompts' && (
+        <div role="tabpanel" className="focus:outline-none bg-transparent">
+          <div className="bg-transparent">
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.2 }}
+              className="bg-transparent"
+            >
+              {/* Category & Add Button */}
+              <div className="flex items-center gap-4">
+                <div className="flex-1">
+                  <button
+                    onClick={() => setShowCategoryModal(true)}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 dark:bg-[#1A1A1A] dark:hover:bg-[#252525] text-gray-700 dark:text-gray-300 text-sm transition-colors duration-200 focus:outline-none"
+                  >
+                    <div className="i-ph:folders w-4 h-4" />
+                    Category Management
+                  </button>
                 </div>
+                
+                <button
+                  onClick={() => setShowAddDialog(true)}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-500 text-white text-sm hover:bg-purple-600 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-purple-500/30"
+                >
+                  <div className="i-ph:plus w-4 h-4" />
+                  Add Prompt
+                </button>
               </div>
-              
-              <div className="px-4 py-3 border-b border-gray-200 dark:border-[#333] bg-blue-50/50 dark:bg-blue-900/10">
-                <div className="flex items-center gap-2">
-                  <div className="i-ph:lock-simple-fill w-4 h-4 text-red-500" />
-                  <p className="text-sm text-gray-800 dark:text-gray-300">
-                    <span className="font-medium">Note:</span> System prompts are active by default and cannot be deactivated. They are essential for the proper functioning of the application.
-                  </p>
-                </div>
-              </div>
-              
-              <table className="w-full">
-                <thead>
-                  <tr className="bg-transparent dark:bg-transparent border-b border-gray-200 dark:border-[#333]">
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Name</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Category</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Description</th>
-                    <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-400">Actions</th>
-                    <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-400">
-                      Select
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200 dark:divide-[#333]">
-                  {/* Filter to show only prompts or rules based on the active tab */}
-                  {[...filteredPrompts.system, ...filteredPrompts.custom]
-                    .filter(item => {
-                      // Check if the item should be shown in the current tab
-                      const isRule = item.id.startsWith('rule_');
-                      return activeTab === 'rules' ? isRule : !isRule;
-                    })
-                    .map((prompt) => (
-                    <tr 
-                      key={prompt.id}
-                      className="bg-transparent dark:bg-transparent hover:bg-gray-50/30 dark:hover:bg-[#1A1A1A]/30 transition-colors duration-200"
-                    >
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <div className={classNames(
-                            'w-8 h-8 flex items-center justify-center rounded-lg transition-colors duration-200',
-                            'bg-gray-100 dark:bg-[#1A1A1A] border border-gray-200 dark:border-[#333]',
-                            promptStates[prompt.id] ? 'text-purple-500' : 'text-gray-500 dark:text-gray-400'
-                          )}>
-                            {prompt.id in systemPrompts ? (
-                              <div className="i-ph:gear-fill w-4 h-4" />
-                            ) : (
-                              <div className="i-ph:book-open-text w-4 h-4" />
-                            )}
+
+              {/* Prompts Table */}
+              <div className="relative overflow-hidden rounded-lg border border-gray-200 dark:border-[#333] bg-transparent dark:bg-transparent mt-4">
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-transparent dark:bg-transparent border-b border-gray-200 dark:border-[#333]">
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Name</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Category</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Description</th>
+                      <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-400">Actions</th>
+                      <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-400">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200 dark:divide-[#333]">
+                    {/* Filter to show only prompts */}
+                    {[...filteredPrompts.system, ...filteredPrompts.custom]
+                      .filter(item => {
+                        // Use as any to bypass TypeScript's type checking
+                        const isRule = 
+                          (item as any).isRule === true || 
+                          item.label.includes('[Rule]') || 
+                          item.id.includes('rule');
+                        
+                        // Use string equality checks
+                        const isRulesTab = String(activeTab) === 'rules';
+                        const isPromptsTab = String(activeTab) === 'prompts';
+                        
+                        return (isRulesTab && isRule) || (isPromptsTab && !isRule);
+                      })
+                      .map((prompt) => (
+                      <tr 
+                        key={prompt.id}
+                        className="bg-transparent dark:bg-transparent hover:bg-gray-50/30 dark:hover:bg-[#1A1A1A]/30 transition-colors duration-200"
+                      >
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <div className={classNames(
+                              'w-8 h-8 flex items-center justify-center rounded-lg transition-colors duration-200',
+                              'bg-gray-100 dark:bg-[#1A1A1A] border border-gray-200 dark:border-[#333]',
+                              promptStates[prompt.id] ? 'text-purple-500' : 'text-gray-500 dark:text-gray-400'
+                            )}>
+                              {prompt.id in systemPrompts ? (
+                                <div className="i-ph:gear-fill w-4 h-4" />
+                              ) : (
+                                <div className="i-ph:book-open-text w-4 h-4" />
+                              )}
+                            </div>
+                            <span className="text-sm font-medium text-gray-900 dark:text-white">{prompt.label}</span>
                           </div>
-                          <span className="text-sm font-medium text-gray-900 dark:text-white">{prompt.label}</span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className="text-sm text-gray-500 dark:text-gray-400">{prompt.category}</span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className="text-sm text-gray-500 dark:text-gray-400 line-clamp-1">{prompt.description}</span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center justify-center gap-2">
-                          {!prompt.isSystem && (
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="text-sm text-gray-500 dark:text-gray-400">{prompt.category}</span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="text-sm text-gray-500 dark:text-gray-400 line-clamp-1">{prompt.description}</span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center justify-center gap-2">
+                            {!(prompt.id in systemPrompts) && (
+                              <button
+                                onClick={() => {
+                                  setDeletePromptId(prompt.id);
+                                  setShowDeleteDialog(true);
+                                }}
+                                className={classNames(
+                                  "p-1.5 rounded-lg transition-all duration-200",
+                                  "text-gray-400 dark:text-red-500/50",
+                                  "hover:text-red-500 dark:hover:text-red-500", 
+                                  "hover:bg-red-500/10 dark:hover:bg-red-950"
+                                )}
+                                title="Delete"
+                              >
+                                <div className="i-ph:trash w-4 h-4" />
+                              </button>
+                            )}
                             <button
                               onClick={() => {
-                                setDeletePromptId(prompt.id);
-                                setShowDeleteDialog(true);
+                                setSelectedPrompt(prompt as CustomPrompt);
+                                setShowViewDialog(true);
                               }}
                               className={classNames(
                                 "p-1.5 rounded-lg transition-all duration-200",
-                                "text-gray-400 dark:text-red-500/50",
-                                "hover:text-red-500 dark:hover:text-red-500", 
-                                "hover:bg-red-500/10 dark:hover:bg-red-950"
+                                "text-gray-400 dark:text-purple-500/50",
+                                "hover:text-purple-500 dark:hover:text-purple-400", 
+                                "hover:bg-purple-500/10 dark:hover:bg-purple-950"
                               )}
-                              title="Delete"
+                              title="View"
                             >
-                              <div className="i-ph:trash w-4 h-4" />
+                              <div className="i-ph:eye w-4 h-4" />
                             </button>
-                          )}
-                          <button
-                            onClick={() => {
-                              setSelectedPrompt(prompt as CustomPrompt);
-                              setShowViewDialog(true);
-                            }}
-                            className={classNames(
-                              "p-1.5 rounded-lg transition-all duration-200",
-                              "text-gray-400 dark:text-purple-500/50",
-                              "hover:text-purple-500 dark:hover:text-purple-400", 
-                              "hover:bg-purple-500/10 dark:hover:bg-purple-950"
-                            )}
-                            title="View"
-                          >
-                            <div className="i-ph:eye w-4 h-4" />
-                          </button>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex justify-center">
-                          {prompt.isSystem ? (
-                            <div className="flex items-center justify-center w-10 h-6 rounded-full bg-red-500/10 text-red-500 cursor-default" title="This system prompt is always active and cannot be modified">
-                              <div className="i-ph:lock-simple-fill w-4 h-4" />
-                            </div>
-                          ) : (
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex justify-center">
                             <Switch
                               checked={promptStates[prompt.id] || false}
                               onCheckedChange={() => handleTogglePromptState(prompt.id)}
@@ -693,17 +564,193 @@ export default function PromptLibraryTab() {
                                 "dark:bg-[#333] dark:data-[state=checked]:bg-purple-500"
                               )}
                             />
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </motion.div>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </motion.div>
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* URL Sources Tab Content */}
+      {activeTab === 'sources' && (
+        <div role="tabpanel" className="focus:outline-none bg-transparent">
+          <div className="bg-transparent">
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.2 }}
+              className="bg-transparent"
+            >
+              <h2 className="text-xl font-medium text-gray-900 dark:text-white mb-4">URL Sources</h2>
+              <p className="text-gray-500 dark:text-gray-400 mb-6">
+                Add URLs that contain prompt or rule definitions to automatically fetch and update items.
+                The system will periodically check these URLs for updates based on the specified interval.
+              </p>
+              
+              <UrlPromptsManager 
+                onImportComplete={(itemType) => {
+                  // Switch to the appropriate tab after import
+                  setActiveTab(itemType);
+                  
+                  // Show notification about the tab switch
+                  toast.info(`Switched to ${itemType} tab to view imported items`, {
+                    autoClose: 3000
+                  });
+                }}
+              />
+            </motion.div>
+          </div>
+        </div>
+      )}
+
+      {/* Rules Tab Content */}
+      {activeTab === 'rules' && (
+        <div role="tabpanel" className="focus:outline-none bg-transparent">
+          <div className="bg-transparent">
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.2 }}
+              className="bg-transparent"
+            >
+              {/* Category & Add Button */}
+              <div className="flex items-center gap-4">
+                <div className="flex-1">
+                  <button
+                    onClick={() => setShowCategoryModal(true)}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 dark:bg-[#1A1A1A] dark:hover:bg-[#252525] text-gray-700 dark:text-gray-300 text-sm transition-colors duration-200 focus:outline-none"
+                  >
+                    <div className="i-ph:folders w-4 h-4" />
+                    Category Management
+                  </button>
+                </div>
+                
+                <button
+                  onClick={() => setShowAddDialog(true)}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-500 text-white text-sm hover:bg-purple-600 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-purple-500/30"
+                >
+                  <div className="i-ph:plus w-4 h-4" />
+                  Add Rule
+                </button>
+              </div>
+
+              {/* Rules Table */}
+              <div className="relative overflow-hidden rounded-lg border border-gray-200 dark:border-[#333] bg-transparent dark:bg-transparent mt-4">
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-transparent dark:bg-transparent border-b border-gray-200 dark:border-[#333]">
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Name</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Category</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Description</th>
+                      <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-400">Actions</th>
+                      <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-400">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200 dark:divide-[#333]">
+                    {/* Filter to show only rules */}
+                    {[...filteredPrompts.system, ...filteredPrompts.custom]
+                      .filter(item => {
+                        // Use as any to bypass TypeScript's type checking
+                        const isRule = 
+                          (item as any).isRule === true || 
+                          item.label.includes('[Rule]') || 
+                          item.id.includes('rule');
+                        
+                        // Use string equality checks
+                        const isRulesTab = String(activeTab) === 'rules';
+                        const isPromptsTab = String(activeTab) === 'prompts';
+                        
+                        return (isRulesTab && isRule) || (isPromptsTab && !isRule);
+                      })
+                      .map((prompt) => (
+                      <tr 
+                        key={prompt.id}
+                        className="bg-transparent dark:bg-transparent hover:bg-gray-50/30 dark:hover:bg-[#1A1A1A]/30 transition-colors duration-200"
+                      >
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <div className={classNames(
+                              'w-8 h-8 flex items-center justify-center rounded-lg transition-colors duration-200',
+                              'bg-gray-100 dark:bg-[#1A1A1A] border border-gray-200 dark:border-[#333]',
+                              promptStates[prompt.id] ? 'text-purple-500' : 'text-gray-500 dark:text-gray-400'
+                            )}>
+                              {prompt.id in systemPrompts ? (
+                                <div className="i-ph:gear-fill w-4 h-4" />
+                              ) : (
+                                <div className="i-ph:book-open-text w-4 h-4" />
+                              )}
+                            </div>
+                            <span className="text-sm font-medium text-gray-900 dark:text-white">{prompt.label}</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="text-sm text-gray-500 dark:text-gray-400">{prompt.category}</span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="text-sm text-gray-500 dark:text-gray-400 line-clamp-1">{prompt.description}</span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center justify-center gap-2">
+                            {!(prompt.id in systemPrompts) && (
+                              <button
+                                onClick={() => {
+                                  setDeletePromptId(prompt.id);
+                                  setShowDeleteDialog(true);
+                                }}
+                                className={classNames(
+                                  "p-1.5 rounded-lg transition-all duration-200",
+                                  "text-gray-400 dark:text-red-500/50",
+                                  "hover:text-red-500 dark:hover:text-red-500", 
+                                  "hover:bg-red-500/10 dark:hover:bg-red-950"
+                                )}
+                                title="Delete"
+                              >
+                                <div className="i-ph:trash w-4 h-4" />
+                              </button>
+                            )}
+                            <button
+                              onClick={() => {
+                                setSelectedPrompt(prompt as CustomPrompt);
+                                setShowViewDialog(true);
+                              }}
+                              className={classNames(
+                                "p-1.5 rounded-lg transition-all duration-200",
+                                "text-gray-400 dark:text-purple-500/50",
+                                "hover:text-purple-500 dark:hover:text-purple-400", 
+                                "hover:bg-purple-500/10 dark:hover:bg-purple-950"
+                              )}
+                              title="View"
+                            >
+                              <div className="i-ph:eye w-4 h-4" />
+                            </button>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex justify-center">
+                            <Switch
+                              checked={promptStates[prompt.id] || false}
+                              onCheckedChange={() => handleTogglePromptState(prompt.id)}
+                              className={classNames(
+                                "data-[state=checked]:bg-purple-500",
+                                "dark:bg-[#333] dark:data-[state=checked]:bg-purple-500"
+                              )}
+                            />
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </motion.div>
+          </div>
+        </div>
+      )}
 
       {/* Add Prompt Dialog */}
       <DialogRoot open={showAddDialog} onOpenChange={setShowAddDialog}>
@@ -820,7 +867,13 @@ export default function PromptLibraryTab() {
       </DialogRoot>
 
       {/* View/Edit Dialog */}
-      <DialogRoot open={showViewDialog} onOpenChange={setShowViewDialog}>
+      <DialogRoot open={showViewDialog} onOpenChange={(open) => {
+        setShowViewDialog(open);
+        if (!open) {
+          setIsEditing(false);
+          setShowNewCategoryInput(false);
+        }
+      }}>
         <Dialog className="max-w-2xl">
           <div className="p-6 bg-white dark:bg-[#0A0A0A] rounded-lg border border-gray-200 dark:border-[#333]">
             <div className="flex items-center gap-3 mb-6">
@@ -870,15 +923,88 @@ export default function PromptLibraryTab() {
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                           Category
                         </label>
-                        <select
-                          value={editFormData.category}
-                          onChange={(e) => setEditFormData({ ...editFormData, category: e.target.value })}
-                          className="w-full px-3 py-2 bg-gray-50 dark:bg-[#1A1A1A] border border-gray-200 dark:border-[#333] rounded-md text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-purple-500/30"
-                        >
-                          {categories.map(category => (
-                            <option key={category} value={category}>{category}</option>
-                          ))}
-                        </select>
+                        {!showNewCategoryInput ? (
+                          <select
+                            value={editFormData.category}
+                            onChange={(e) => {
+                              if (e.target.value === '__new__') {
+                                setShowNewCategoryInput(true);
+                              } else {
+                                setEditFormData({ ...editFormData, category: e.target.value });
+                              }
+                            }}
+                            className="w-full px-3 py-2 bg-gray-50 dark:bg-[#1A1A1A] border border-gray-200 dark:border-[#333] rounded-md text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-purple-500/30"
+                          >
+                            <option value="Custom">Custom</option>
+                            {categories.filter(c => c !== 'Custom').map(category => (
+                              <option key={category} value={category}>{category}</option>
+                            ))}
+                            <option value="__new__">+ Add New Category</option>
+                          </select>
+                        ) : (
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={customCategory}
+                              onChange={(e) => setCustomCategory(e.target.value)}
+                              placeholder="New Category Name"
+                              className="flex-1 px-3 py-2 bg-gray-50 dark:bg-[#1A1A1A] border border-gray-200 dark:border-[#333] rounded-md text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-purple-500/30"
+                            />
+                            <button
+                              onClick={() => {
+                                if (!customCategory.trim()) {
+                                  toast.error('Category name is required');
+                                  return;
+                                }
+                                
+                                if (categories.includes(customCategory.trim())) {
+                                  toast.error('Category already exists');
+                                  return;
+                                }
+                                
+                                // Add a temporary prompt with this category
+                                try {
+                                  PromptLibrary.addCustomPrompt({
+                                    label: `__temp_${Date.now()}`,
+                                    description: 'Temporary item for category creation',
+                                    content: 'This is a temporary item that will be deleted automatically.',
+                                    category: customCategory.trim()
+                                  });
+                                  
+                                  // Refresh categories
+                                  loadPrompts();
+                                  
+                                  // Set the new category in the form
+                                  setEditFormData({ 
+                                    ...editFormData, 
+                                    category: customCategory.trim() 
+                                  });
+                                  
+                                  setCustomCategory('');
+                                  setShowNewCategoryInput(false);
+                                  
+                                  toast.success(`Category "${customCategory.trim()}" created`);
+                                } catch (error) {
+                                  console.error('Error creating category:', error);
+                                  toast.error('Failed to create category');
+                                }
+                              }}
+                              className="px-3 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500/30 transition-colors"
+                            >
+                              Add
+                            </button>
+                            <button
+                              onClick={() => {
+                                setShowNewCategoryInput(false);
+                                setCustomCategory('');
+                              }}
+                              className="px-2 py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-500/30 transition-colors"
+                              title="Cancel"
+                            >
+                              <div className="i-ph:x w-4 h-4" />
+                            </button>
+                          </div>
+                        )}
                       </div>
                       
                       <div>
@@ -901,7 +1027,9 @@ export default function PromptLibraryTab() {
                   <ScrollArea className="max-h-[60vh] pr-4">
                     <div className="space-y-4">
                       <div>
-                        <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Name</h3>
+                        <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">
+                          Name
+                        </h3>
                         <p className="text-base text-gray-900 dark:text-white">{selectedPrompt.label}</p>
                       </div>
                       
@@ -927,13 +1055,7 @@ export default function PromptLibraryTab() {
                       <div>
                         <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">Content</h3>
                         <div className="bg-gray-50 dark:bg-[#1A1A1A] border border-gray-200 dark:border-[#333] rounded-md p-3 overflow-auto">
-                          {selectedPrompt?.isSystem ? (
-                            <div className="text-sm text-gray-700 dark:text-gray-300 italic">
-                              This is a system prompt. Its content is dynamically generated and cannot be directly viewed.
-                            </div>
-                          ) : (
-                            <pre className="text-sm text-gray-900 dark:text-white font-mono whitespace-pre-wrap">{selectedPrompt?.content}</pre>
-                          )}
+                          <pre className="text-sm text-gray-900 dark:text-white font-mono whitespace-pre-wrap">{selectedPrompt.content}</pre>
                         </div>
                       </div>
                     </div>
@@ -970,7 +1092,7 @@ export default function PromptLibraryTab() {
                       >
                         Close
                       </DialogButton>
-                      {selectedPrompt && !selectedPrompt.isSystem && (
+                      {selectedPrompt && !(selectedPrompt.id in systemPrompts) && (
                         <DialogButton
                           type="primary"
                           onClick={() => setIsEditing(true)}
@@ -1173,28 +1295,6 @@ export default function PromptLibraryTab() {
               >
                 Close
               </DialogButton>
-            </div>
-          </div>
-        </Dialog>
-      </DialogRoot>
-
-      {/* Add this new Dialog for URL import */}
-      <DialogRoot open={showImportDialog} onOpenChange={setShowImportDialog}>
-        <Dialog className="max-w-2xl">
-          <div className="p-6 bg-white dark:bg-[#0A0A0A] rounded-lg border border-gray-200 dark:border-[#333]">
-            <div className="flex items-center gap-3 mb-6">
-              <div className="i-ph:link w-6 h-6 text-purple-500" />
-              <DialogTitle className="text-xl font-semibold text-gray-900 dark:text-white">
-                Import from URL
-              </DialogTitle>
-            </div>
-            
-            <DialogDescription className="mb-6 text-gray-500 dark:text-gray-400">
-              Import prompts or rules from a URL. Supports various formats including text, JSON, CSV, and HTML.
-            </DialogDescription>
-            
-            <div className="mt-4">
-              <UrlImportForm onClose={() => setShowImportDialog(false)} defaultType={activeTab === 'prompts' ? 'prompt' : 'rules'} />
             </div>
           </div>
         </Dialog>

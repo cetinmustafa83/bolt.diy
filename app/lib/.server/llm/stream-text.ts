@@ -10,12 +10,34 @@ import { createScopedLogger } from '~/utils/logger';
 import { createFilesContext, extractPropertiesFromMessage } from './utils';
 import { getFilePaths } from './select-context';
 
+// Helper function to get selected rule IDs (client-side only)
+function getSelectedRuleIds(): string[] {
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const selectedRules = localStorage.getItem('bolt_selected_rules');
+      if (selectedRules) {
+        return JSON.parse(selectedRules);
+      }
+    } catch (error) {
+      console.error('Error getting selected rules:', error);
+    }
+  }
+  return [];
+}
+
 export type Messages = Message[];
 
 export type StreamingOptions = Omit<Parameters<typeof _streamText>[0], 'model'>;
 
 const logger = createScopedLogger('stream-text');
 
+/**
+ * Stream text from the OpenAI API
+ * @param message The user message to process
+ * @param context The context to include with the message
+ * @param options Additional options for the request 
+ * @returns A ReadableStream of text
+ */
 export async function streamText(props: {
   messages: Omit<Message, 'id'>[];
   env?: Env;
@@ -92,12 +114,15 @@ export async function streamText(props: {
 
   const dynamicMaxTokens = modelDetails && modelDetails.maxTokenAllowed ? modelDetails.maxTokenAllowed : MAX_TOKENS;
 
-  let systemPrompt =
-    PromptLibrary.getPropmtFromLibrary(promptId || 'default', {
-      cwd: WORK_DIR,
-      allowedHtmlElements: allowedHTMLElements,
-      modificationTagName: MODIFICATIONS_TAG_NAME,
-    }) ?? getSystemPrompt();
+  // Get any selected rule IDs (client-side only)
+  const selectedRuleIds = getSelectedRuleIds();
+  
+  // Get the system prompt with the selected rules applied
+  let systemPrompt = PromptLibrary.getPropmtFromLibrary(promptId || 'default', {
+    cwd: WORK_DIR,
+    allowedHtmlElements: allowedHTMLElements,
+    modificationTagName: MODIFICATIONS_TAG_NAME,
+  }) ?? getSystemPrompt();
 
   if (files && contextFiles && contextOptimization) {
     const codeContext = createFilesContext(contextFiles, true);
@@ -152,5 +177,48 @@ ${props.summary}
     maxTokens: dynamicMaxTokens,
     messages: convertToCoreMessages(processedMessages as any),
     ...options,
+  });
+}
+
+// Legacy compatibility function - will be removed
+export async function getTextResponse(
+  message: string,
+  context?: string,
+  promptId?: string
+) {
+  // Set up a promise to collect the entire response
+  return new Promise<string>(async (resolve, reject) => {
+    try {
+      let fullText = '';
+
+      // Stream the response and collect it
+      const stream = await streamText({
+        messages: [{ role: 'user', content: message }],
+        env: {},
+        options: {
+          onComplete: (completion) => resolve(completion),
+          onError: (error) => reject(error),
+        },
+      });
+
+      // Create a reader for the stream
+      const reader = stream.getReader();
+
+      // Process the chunks
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (done) {
+          break;
+        }
+
+        fullText += value;
+      }
+
+      // Resolve with the collected text
+      resolve(fullText);
+    } catch (error) {
+      reject(error);
+    }
   });
 }

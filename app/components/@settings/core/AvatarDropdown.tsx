@@ -6,9 +6,8 @@ import { profileStore } from '~/lib/stores/profile';
 import type { TabType, Profile } from './types';
 
 const BetaLabel = () => (
-  <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-gradient-to-r from-purple-500/20 to-blue-500/20 dark:from-purple-500/30 dark:to-blue-500/30 backdrop-blur-sm shadow-sm border border-purple-500/10 dark:border-purple-500/20 ml-2">
-    <div className="i-ph:sparkle-fill w-3 h-3 text-purple-500 dark:text-purple-400" />
-    <span className="text-[10px] font-semibold tracking-wider text-purple-600 dark:text-purple-300">BETA</span>
+  <span className="px-1.5 py-0.5 rounded-full bg-purple-500/10 dark:bg-purple-500/20 text-[10px] font-medium text-purple-600 dark:text-purple-400 ml-2">
+    BETA
   </span>
 );
 

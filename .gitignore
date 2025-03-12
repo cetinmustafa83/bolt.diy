@@ -27,7 +27,6 @@ dist-ssr
 /build
 .env.local
 .env
-.env.example
 .dev.vars
 *.vars
 .wrangler

@@ -117,12 +117,6 @@ export default defineConfig((config) => {
       'OLLAMA_API_BASE_URL',
       'LMSTUDIO_API_BASE_URL',
       'TOGETHER_API_BASE_URL',
-      'ANTHROPIC_API_BASE_URL',
-      'MISTRAL_API_BASE_URL',
-      'DEEPSEEK_API_BASE_URL',
-      'GOOGLE_API_BASE_URL',
-      'COHERE_API_BASE_URL',
-      'AMAZON_BEDROCK_API_BASE_URL'
     ],
     css: {
       preprocessorOptions: {
@@ -144,12 +138,12 @@ function chrome129IssuePlugin() {
         if (raw) {
           const version = parseInt(raw[2], 10);
 
-          // Only show warning for Chrome versions 129-131 (known issue range)
-          if (version >= 129 && version <= 131) {
+          if (version === 129) {
             res.setHeader('content-type', 'text/html');
             res.end(
-              '<body><h1>Chrome Version Warning</h1><p>Chrome versions 129-131 may have issues with JavaScript modules & Vite local development. Consider using Chrome Canary or a different browser version.</p><p><b>Note:</b> This only impacts <u>local development</u>. Production builds work fine.</p></body>',
+              '<body><h1>Please use Chrome Canary for testing.</h1><p>Chrome 129 has an issue with JavaScript modules & Vite local development, see <a href="https://github.com/stackblitz/bolt.new/issues/86#issuecomment-2395519258">for more information.</a></p><p><b>Note:</b> This only impacts <u>local development</u>. `pnpm run build` and `pnpm run start` will work fine in this browser.</p></body>',
             );
+
             return;
           }
         }
