@@ -1,11 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useStore } from '@nanostores/react';
 import { Switch } from '~/components/ui/Switch';
 import { classNames } from '~/utils/classNames';
 import { tabConfigurationStore } from '~/lib/stores/settings';
 import { TAB_LABELS } from '~/components/@settings/core/constants';
-import type { TabType } from '~/components/@settings/core/types';
+import type { TabType, UserTabConfig } from '~/components/@settings/core/types';
 import { toast } from 'react-toastify';
 import { TbLayoutGrid } from 'react-icons/tb';
 import { useSettingsStore } from '~/lib/stores/settings';
@@ -24,6 +24,7 @@ const TAB_ICONS: Record<TabType, string> = {
   debug: 'i-ph:bug-fill',
   'event-logs': 'i-ph:list-bullets-fill',
   update: 'i-ph:arrow-clockwise-fill',
+  'prompt-library': 'i-ph:book-bookmark-fill',
   'task-manager': 'i-ph:chart-line-fill',
   'tab-management': 'i-ph:squares-four-fill',
 };
@@ -40,17 +41,28 @@ const DEFAULT_USER_TABS: TabType[] = [
 ];
 
 // Define which tabs can be added to user mode
-const OPTIONAL_USER_TABS: TabType[] = ['profile', 'settings', 'task-manager', 'service-status', 'debug', 'update'];
+const OPTIONAL_USER_TABS: TabType[] = [
+  'profile',
+  'settings',
+  'task-manager',
+  'service-status',
+  'debug',
+  'update',
+  'prompt-library',
+];
 
 // All available tabs for user mode
 const ALL_USER_TABS = [...DEFAULT_USER_TABS, ...OPTIONAL_USER_TABS];
 
 // Define which tabs are beta
-const BETA_TABS = new Set<TabType>(['task-manager', 'service-status', 'update', 'local-providers']);
+const BETA_TABS = new Set<TabType>(['task-manager', 'service-status', 'update', 'local-providers', 'prompt-library']);
 
 // Beta label component
 const BetaLabel = () => (
-  <span className="px-1.5 py-0.5 text-[10px] rounded-full bg-purple-500/10 text-purple-500 font-medium">BETA</span>
+  <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-gradient-to-r from-purple-500/20 to-blue-500/20 dark:from-purple-500/30 dark:to-blue-500/30 backdrop-blur-sm shadow-sm border border-purple-500/10 dark:border-purple-500/20 ml-1.5">
+    <div className="i-ph:sparkle-fill w-3 h-3 text-purple-500 dark:text-purple-400" />
+    <span className="text-[10px] font-semibold tracking-wider text-purple-600 dark:text-purple-300">BETA</span>
+  </span>
 );
 
 export const TabManagement = () => {
@@ -59,46 +71,24 @@ export const TabManagement = () => {
   const { setSelectedTab } = useSettingsStore();
 
   const handleTabVisibilityChange = (tabId: TabType, checked: boolean) => {
-    // Get current tab configuration
     const currentTab = tabConfiguration.userTabs.find((tab) => tab.id === tabId);
 
-    // If tab doesn't exist in configuration, create it
-    if (!currentTab) {
-      const newTab = {
-        id: tabId,
-        visible: checked,
-        window: 'user' as const,
-        order: tabConfiguration.userTabs.length,
-      };
+    const newTabConfig: UserTabConfig = {
+      id: tabId,
+      visible: checked,
+      window: 'user',
+      order: currentTab?.order || tabConfiguration.userTabs.length,
+    };
 
-      const updatedTabs = [...tabConfiguration.userTabs, newTab];
+    // Update store
+    const updatedTabs = [...tabConfiguration.userTabs];
+    const existingIndex = updatedTabs.findIndex((tab) => tab.id === tabId);
 
-      tabConfigurationStore.set({
-        ...tabConfiguration,
-        userTabs: updatedTabs,
-      });
-
-      toast.success(`Tab ${checked ? 'enabled' : 'disabled'} successfully`);
-
-      return;
+    if (existingIndex !== -1) {
+      updatedTabs[existingIndex] = newTabConfig;
+    } else {
+      updatedTabs.push(newTabConfig);
     }
-
-    // Check if tab can be enabled in user mode
-    const canBeEnabled = DEFAULT_USER_TABS.includes(tabId) || OPTIONAL_USER_TABS.includes(tabId);
-
-    if (!canBeEnabled && checked) {
-      toast.error('This tab cannot be enabled in user mode');
-      return;
-    }
-
-    // Update tab visibility
-    const updatedTabs = tabConfiguration.userTabs.map((tab) => {
-      if (tab.id === tabId) {
-        return { ...tab, visible: checked };
-      }
-
-      return tab;
-    });
 
     // Update store
     tabConfigurationStore.set({
@@ -107,7 +97,7 @@ export const TabManagement = () => {
     });
 
     // Show success message
-    toast.success(`Tab ${checked ? 'enabled' : 'disabled'} successfully`);
+    toast.success(`${TAB_LABELS[tabId]} ${checked ? 'enabled' : 'disabled'}`);
   };
 
   // Create a map of existing tab configurations
@@ -115,14 +105,19 @@ export const TabManagement = () => {
 
   // Generate the complete list of tabs, including those not in the configuration
   const allTabs = ALL_USER_TABS.map((tabId) => {
-    return (
-      tabConfigMap.get(tabId) || {
-        id: tabId,
-        visible: false,
-        window: 'user' as const,
-        order: -1,
-      }
-    );
+    const existingTab = tabConfigMap.get(tabId);
+    const isDefaultTab = DEFAULT_USER_TABS.includes(tabId);
+
+    if (existingTab) {
+      return existingTab;
+    }
+
+    return {
+      id: tabId,
+      visible: isDefaultTab, // Default tabs are visible by default
+      window: isDefaultTab ? 'user' : ('developer' as const),
+      order: -1,
+    };
   });
 
   // Filter tabs based on search query
@@ -214,8 +209,8 @@ export const TabManagement = () => {
               >
                 {/* Status Badges */}
                 <div className="absolute top-1 right-1.5 flex gap-1">
-                  <span className="px-1.5 py-0.25 text-xs rounded-full bg-purple-500/10 text-purple-500 font-medium mr-2">
-                    Default
+                  <span className="px-1.5 py-0.25 text-xs rounded-full bg-purple-500/10 text-purple-500 font-medium">
+                    {DEFAULT_USER_TABS.includes(tab.id) ? 'Default' : 'Optional'}
                   </span>
                 </div>
 
@@ -247,23 +242,13 @@ export const TabManagement = () => {
                           {BETA_TABS.has(tab.id) && <BetaLabel />}
                         </div>
                         <p className="text-xs text-bolt-elements-textSecondary mt-0.5">
-                          {tab.visible ? 'Visible in user mode' : 'Hidden in user mode'}
+                          {tab.visible ? 'Enabled in user mode' : 'Disabled in user mode'}
                         </p>
                       </div>
                       <Switch
                         checked={tab.visible}
-                        onCheckedChange={(checked) => {
-                          const isDisabled =
-                            !DEFAULT_USER_TABS.includes(tab.id) && !OPTIONAL_USER_TABS.includes(tab.id);
-
-                          if (!isDisabled) {
-                            handleTabVisibilityChange(tab.id, checked);
-                          }
-                        }}
-                        className={classNames('data-[state=checked]:bg-purple-500 ml-4', {
-                          'opacity-50 pointer-events-none':
-                            !DEFAULT_USER_TABS.includes(tab.id) && !OPTIONAL_USER_TABS.includes(tab.id),
-                        })}
+                        onCheckedChange={(checked) => handleTabVisibilityChange(tab.id, checked)}
+                        className="data-[state=checked]:bg-purple-500 ml-4"
                       />
                     </div>
                   </div>
@@ -308,8 +293,8 @@ export const TabManagement = () => {
               >
                 {/* Status Badges */}
                 <div className="absolute top-1 right-1.5 flex gap-1">
-                  <span className="px-1.5 py-0.25 text-xs rounded-full bg-blue-500/10 text-blue-500 font-medium mr-2">
-                    Optional
+                  <span className="px-1.5 py-0.25 text-xs rounded-full bg-purple-500/10 text-purple-500 font-medium">
+                    {DEFAULT_USER_TABS.includes(tab.id) ? 'Default' : 'Optional'}
                   </span>
                 </div>
 
@@ -341,23 +326,13 @@ export const TabManagement = () => {
                           {BETA_TABS.has(tab.id) && <BetaLabel />}
                         </div>
                         <p className="text-xs text-bolt-elements-textSecondary mt-0.5">
-                          {tab.visible ? 'Visible in user mode' : 'Hidden in user mode'}
+                          {tab.visible ? 'Enabled in user mode' : 'Disabled in user mode'}
                         </p>
                       </div>
                       <Switch
                         checked={tab.visible}
-                        onCheckedChange={(checked) => {
-                          const isDisabled =
-                            !DEFAULT_USER_TABS.includes(tab.id) && !OPTIONAL_USER_TABS.includes(tab.id);
-
-                          if (!isDisabled) {
-                            handleTabVisibilityChange(tab.id, checked);
-                          }
-                        }}
-                        className={classNames('data-[state=checked]:bg-purple-500 ml-4', {
-                          'opacity-50 pointer-events-none':
-                            !DEFAULT_USER_TABS.includes(tab.id) && !OPTIONAL_USER_TABS.includes(tab.id),
-                        })}
+                        onCheckedChange={(checked) => handleTabVisibilityChange(tab.id, checked)}
+                        className="data-[state=checked]:bg-purple-500 ml-4"
                       />
                     </div>
                   </div>

@@ -15,7 +15,8 @@ import {
 } from '~/components/editor/codemirror/CodeMirrorEditor';
 import { IconButton } from '~/components/ui/IconButton';
 import { PanelHeaderButton } from '~/components/ui/PanelHeaderButton';
-import { Slider, type SliderOptions } from '~/components/ui/Slider';
+import { Slider } from '~/components/ui/Slider';
+import type { SliderOptions } from '~/components/ui/Slider';
 import { workbenchStore, type WorkbenchViewType } from '~/lib/stores/workbench';
 import { classNames } from '~/utils/classNames';
 import { cubicEasingFn } from '~/utils/easings';
@@ -24,6 +25,9 @@ import { EditorPanel } from './EditorPanel';
 import { Preview } from './Preview';
 import useViewport from '~/lib/hooks';
 import { PushToGitHubDialog } from '~/components/@settings/tabs/connections/components/PushToGitHubDialog';
+import { useSettings } from '~/lib/hooks/useSettings';
+import { logStore } from '~/lib/stores/logs';
+import { PromptLibrary } from '~/lib/common/prompt-library';
 
 interface WorkspaceProps {
   chatStarted?: boolean;
@@ -77,13 +81,13 @@ const FileModifiedDropdown = memo(
     fileHistory: Record<string, FileHistory>;
     onSelectFile: (filePath: string) => void;
   }) => {
-    const modifiedFiles = Object.entries(fileHistory);
-    const hasChanges = modifiedFiles.length > 0;
+    const files = Object.entries(fileHistory);
+    const hasChanges = files.length > 0;
     const [searchQuery, setSearchQuery] = useState('');
 
     const filteredFiles = useMemo(() => {
-      return modifiedFiles.filter(([filePath]) => filePath.toLowerCase().includes(searchQuery.toLowerCase()));
-    }, [modifiedFiles, searchQuery]);
+      return files.filter(([filePath]) => filePath.toLowerCase().includes(searchQuery.toLowerCase()));
+    }, [files, searchQuery]);
 
     return (
       <div className="flex items-center gap-2">
@@ -94,7 +98,7 @@ const FileModifiedDropdown = memo(
                 <span className="font-medium">File Changes</span>
                 {hasChanges && (
                   <span className="w-5 h-5 rounded-full bg-accent-500/20 text-accent-500 text-xs flex items-center justify-center border border-accent-500/30">
-                    {modifiedFiles.length}
+                    {files.length}
                   </span>
                 )}
               </Popover.Button>
@@ -283,8 +287,6 @@ export const Workbench = memo(
     const [isPushDialogOpen, setIsPushDialogOpen] = useState(false);
     const [fileHistory, setFileHistory] = useState<Record<string, FileHistory>>({});
 
-    // const modifiedFiles = Array.from(useStore(workbenchStore.unsavedFiles).keys());
-
     const hasPreview = useStore(computed(workbenchStore.previews, (previews) => previews.length > 0));
     const showWorkbench = useStore(workbenchStore.showWorkbench);
     const selectedFile = useStore(workbenchStore.selectedFile);
@@ -349,6 +351,47 @@ export const Workbench = memo(
     const handleSelectFile = useCallback((filePath: string) => {
       workbenchStore.setSelectedFile(filePath);
       workbenchStore.currentView.set('diff');
+    }, []);
+
+    useEffect(() => {
+      const initializePrompts = async () => {
+        try {
+          // First check if the rule exists
+          const customPromptsData = await PromptLibrary.getCustomPrompts();
+          const existingRule = customPromptsData.find((p) => p.id === 'rule_typescript_guidelines');
+
+          // If rule doesn't exist, add it silently without toast messages
+          if (!existingRule) {
+            const guidelinesContent = `# TypeScript Project Guidelines
+
+## Project Structure
+- Use a clear and consistent directory structure
+- Separate source code (src/) from build output (dist/)
+- Keep related files together in feature-based directories
+- Use meaningful file names that reflect their purpose
+
+## TypeScript Configuration
+- Maintain a strict tsconfig.json
+- Enable strict type checking
+- Use project references for large codebases
+- Configure module resolution strategy
+- Set appropriate target ECMAScript version`;
+
+            await PromptLibrary.addCustomPrompt({
+              id: 'rule_typescript_guidelines',
+              label: 'TypeScript Project - Project Guidelines',
+              description: 'Essential guidelines and best practices for TypeScript projects',
+              content: guidelinesContent,
+              category: 'Development',
+            });
+          }
+        } catch (error) {
+          console.error('Error initializing prompts:', error);
+          logStore.logSystem('Failed to initialize prompts');
+        }
+      };
+
+      initializePrompts();
     }, []);
 
     return (
@@ -437,7 +480,7 @@ export const Workbench = memo(
                     initial={{ x: '100%' }}
                     animate={{ x: selectedView === 'diff' ? '0%' : selectedView === 'code' ? '100%' : '-100%' }}
                   >
-                    <DiffView fileHistory={fileHistory} setFileHistory={setFileHistory} actionRunner={actionRunner} />
+                    <DiffView fileHistory={fileHistory} setFileHistory={setFileHistory} _actionRunner={actionRunner} />
                   </View>
                   <View initial={{ x: '100%' }} animate={{ x: selectedView === 'preview' ? '0%' : '100%' }}>
                     <Preview />

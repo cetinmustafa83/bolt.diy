@@ -1,7 +1,6 @@
 import { type ActionFunctionArgs } from '@remix-run/cloudflare';
 import { createDataStream, generateId } from 'ai';
 import { MAX_RESPONSE_SEGMENTS, MAX_TOKENS, type FileMap } from '~/lib/.server/llm/constants';
-import { CONTINUE_PROMPT } from '~/lib/common/prompts/prompts';
 import { streamText, type Messages, type StreamingOptions } from '~/lib/.server/llm/stream-text';
 import SwitchableStream from '~/lib/.server/llm/switchable-stream';
 import type { IProviderSetting } from '~/types/model';
@@ -11,6 +10,29 @@ import type { ContextAnnotation, ProgressAnnotation } from '~/types/context';
 import { WORK_DIR } from '~/utils/constants';
 import { createSummary } from '~/lib/.server/llm/create-summary';
 import { extractPropertiesFromMessage } from '~/lib/.server/llm/utils';
+
+// Constants
+const CONTINUE_MESSAGE = 'Please continue with your previous response.';
+const SMALL_MODEL_PROVIDERS = ['ollama', 'local', 'lmstudio'];
+const SMALL_MODEL_MAX_CONTEXT = 4096;
+
+function isSmallModel(provider: string): boolean {
+  if (!provider) {
+    return false;
+  }
+
+  return SMALL_MODEL_PROVIDERS.includes(provider.toLowerCase());
+}
+
+function optimizeContextForSmallModel(content: string, maxLength: number = SMALL_MODEL_MAX_CONTEXT): string {
+  if (!content || content.length <= maxLength) {
+    return content;
+  }
+
+  // Keep the first part and last part of the context
+  const halfLength = Math.floor(maxLength / 2);
+  return content.slice(0, halfLength) + '\n...\n' + content.slice(-halfLength);
+}
 
 export async function action(args: ActionFunctionArgs) {
   return chatAction(args);
@@ -51,6 +73,27 @@ async function chatAction({ context, request }: ActionFunctionArgs) {
   );
 
   const stream = new SwitchableStream();
+  const lastMessage = messages[messages.length - 1];
+  const { provider } = extractPropertiesFromMessage(lastMessage);
+  const isSmallLLM = isSmallModel(provider);
+
+  // Optimize context for small LLMs
+  if (isSmallLLM && contextOptimization) {
+    // Reduce context window for small models
+    const messageSliceId = Math.max(0, messages.length - 2);
+    const optimizedMessages = messages.slice(messageSliceId);
+
+    // Optimize file content if present
+    if (files) {
+      Object.keys(files).forEach((key) => {
+        if (files[key].content) {
+          files[key].content = optimizeContextForSmallModel(files[key].content);
+        }
+      });
+    }
+
+    messages.splice(0, messages.length, ...optimizedMessages);
+  }
 
   const cumulativeUsage = {
     completionTokens: 0,
@@ -227,7 +270,7 @@ async function chatAction({ context, request }: ActionFunctionArgs) {
             messages.push({
               id: generateId(),
               role: 'user',
-              content: `[Model: ${model}]\n\n[Provider: ${provider}]\n\n${CONTINUE_PROMPT}`,
+              content: `[Model: ${model}]\n\n[Provider: ${provider}]\n\n${CONTINUE_MESSAGE}`,
             });
 
             const result = await streamText({

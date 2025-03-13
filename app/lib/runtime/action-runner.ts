@@ -317,26 +317,21 @@ export class ActionRunner {
   async getFileHistory(filePath: string): Promise<FileHistory | null> {
     try {
       const webcontainer = await this.#webcontainer;
-      const historyPath = this.#getHistoryPath(filePath);
-      const content = await webcontainer.fs.readFile(historyPath, 'utf-8');
+      const fileHandle = await webcontainer.fs.readFile(filePath, 'utf-8');
 
-      return JSON.parse(content);
-    } catch (error) {
-      logger.error('Failed to get file history:', error);
+      return JSON.parse(fileHandle.toString());
+    } catch {
       return null;
     }
   }
 
   async saveFileHistory(filePath: string, history: FileHistory) {
-    // const webcontainer = await this.#webcontainer;
-    const historyPath = this.#getHistoryPath(filePath);
-
-    await this.#runFileAction({
-      type: 'file',
-      filePath: historyPath,
-      content: JSON.stringify(history),
-      changeSource: 'auto-save',
-    } as any);
+    try {
+      const webcontainer = await this.#webcontainer;
+      await webcontainer.fs.writeFile(filePath, JSON.stringify(history, null, 2), 'utf-8');
+    } catch (_error) {
+      console.error('Error saving file history:', _error);
+    }
   }
 
   #getHistoryPath(filePath: string) {

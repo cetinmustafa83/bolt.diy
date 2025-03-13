@@ -1,0 +1,942 @@
+From ce6fd3d0f9d3356c0845cabab3aa3a463e66d459 Mon Sep 17 00:00:00 2001
+From: User <user@example.com>
+Date: Thu, 13 Mar 2025 23:07:01 +0100
+Subject: [PATCH] feat(settings): add prompt library with category management
+
+---
+ .vite/deps_temp_b78fb423/package.json         |  3 -
+ .../shared/components/TabManagement.tsx       |  3 -
+ .../@settings/tabs/features/FeaturesTab.tsx   |  2 +-
+ .../tabs/prompt-library/PromptLibraryTab.tsx  | 92 ++-----------------
+ app/components/UrlImportForm.tsx              | 19 ++--
+ app/components/chat/BaseChat.tsx              |  3 -
+ app/components/ui/Slider.tsx                  |  5 -
+ app/components/workbench/FileTree.tsx         |  1 -
+ app/components/workbench/Workbench.client.tsx | 61 ++++++++++--
+ app/lib/common/db.ts                          | 20 +++-
+ app/lib/common/prompt-library.ts              | 13 +--
+ app/lib/common/prompts/optimized.ts           |  5 +-
+ app/lib/runtime/action-runner.ts              | 22 ++---
+ app/lib/stores/files.ts                       |  5 +-
+ app/routes/api.chat.ts                        | 46 +++++++++-
+ app/types/settings.ts                         |  2 +-
+ app/utils/importHelpers.ts                    |  8 +-
+ package.json                                  |  1 +
+ pnpm-lock.yaml                                | 58 ++++++++++++
+ scripts/clean.js                              | 44 +++++++++
+ 20 files changed, 258 insertions(+), 155 deletions(-)
+ delete mode 100644 .vite/deps_temp_b78fb423/package.json
+ create mode 100644 scripts/clean.js
+
+diff --git a/.vite/deps_temp_b78fb423/package.json b/.vite/deps_temp_b78fb423/package.json
+deleted file mode 100644
+index 3dbc1ca..0000000
+--- a/.vite/deps_temp_b78fb423/package.json
++++ /dev/null
+@@ -1,3 +0,0 @@
+-{
+-  "type": "module"
+-}
+diff --git a/app/components/@settings/shared/components/TabManagement.tsx b/app/components/@settings/shared/components/TabManagement.tsx
+index f8ea935..a226160 100644
+--- a/app/components/@settings/shared/components/TabManagement.tsx
++++ b/app/components/@settings/shared/components/TabManagement.tsx
+@@ -1,6 +1,4 @@
+ import { useEffect, useState } from 'react';
+-import { useSettings } from '~/lib/hooks/useSettings';
+-import { Button } from '~/components/ui/Button';
+ import { motion } from 'framer-motion';
+ import { useStore } from '@nanostores/react';
+ import { Switch } from '~/components/ui/Switch';
+@@ -73,7 +71,6 @@ export const TabManagement = () => {
+   const { setSelectedTab } = useSettingsStore();
+ 
+   const handleTabVisibilityChange = (tabId: TabType, checked: boolean) => {
+-    const _isDefaultTab = DEFAULT_USER_TABS.includes(tabId);
+     const currentTab = tabConfiguration.userTabs.find((tab) => tab.id === tabId);
+ 
+     const newTabConfig: UserTabConfig = {
+diff --git a/app/components/@settings/tabs/features/FeaturesTab.tsx b/app/components/@settings/tabs/features/FeaturesTab.tsx
+index 0143aa6..669086e 100644
+--- a/app/components/@settings/tabs/features/FeaturesTab.tsx
++++ b/app/components/@settings/tabs/features/FeaturesTab.tsx
+@@ -6,7 +6,7 @@ import { classNames } from '~/utils/classNames';
+ import { toast } from 'react-toastify';
+ import { PromptLibrary } from '~/lib/common/prompt-library';
+ import Select from 'react-select';
+-import type { StylesConfig, MultiValue, ActionMeta } from 'react-select';
++import type { StylesConfig, MultiValue } from 'react-select';
+ import { components } from 'react-select';
+ 
+ interface FeatureToggle {
+diff --git a/app/components/@settings/tabs/prompt-library/PromptLibraryTab.tsx b/app/components/@settings/tabs/prompt-library/PromptLibraryTab.tsx
+index ba52668..bfcfdfa 100644
+--- a/app/components/@settings/tabs/prompt-library/PromptLibraryTab.tsx
++++ b/app/components/@settings/tabs/prompt-library/PromptLibraryTab.tsx
+@@ -1,5 +1,5 @@
+ import React, { useState, useEffect } from 'react';
+-import { motion, AnimatePresence } from 'framer-motion';
++import { motion } from 'framer-motion';
+ import { toast } from 'react-toastify';
+ import { classNames } from '~/utils/classNames';
+ import { PromptLibrary, type CustomPrompt } from '~/lib/common/prompt-library';
+@@ -226,11 +226,13 @@ export default function PromptLibraryTab() {
+ 
+     if (!editingCategory.new.trim()) {
+       toast.error('Category name is required');
++
+       return;
+     }
+ 
+     if (editingCategory.original !== editingCategory.new && categories.includes(editingCategory.new.trim())) {
+       toast.error('Category already exists');
++
+       return;
+     }
+ 
+@@ -249,13 +251,13 @@ export default function PromptLibraryTab() {
+         }),
+       );
+ 
+-      logStore.logSystem(`Renamed category: ${editingCategory.original} to ${editingCategory.new}`);
+-      toast.success('Category updated successfully');
+       setEditingCategory(null);
+       await loadPrompts();
+-    } catch (error) {
+-      console.error('Error updating category:', error);
++    } catch (_error) {
++      console.error('Error updating category:', _error);
+       toast.error('Failed to update category');
++
++      return;
+     }
+   };
+ 
+@@ -303,83 +305,6 @@ export default function PromptLibraryTab() {
+     }
+   };
+ 
+-  // Handle clearing all custom categories
+-  const handleClearCustomCategories = async () => {
+-    if (
+-      !window.confirm(
+-        'Are you sure you want to remove all custom categories? All custom prompts will be moved to the "Custom" category.',
+-      )
+-    ) {
+-      return;
+-    }
+-
+-    try {
+-      // Find all custom prompts and set their category to "Custom"
+-      const prompts = await PromptLibrary.getCustomPrompts();
+-      let updatedCount = 0;
+-
+-      await Promise.all(
+-        prompts.map(async (prompt: CustomPrompt) => {
+-          const isSystemCategory = ['Development', 'Writing', 'Business', 'Education', 'Custom'].includes(
+-            prompt.category,
+-          );
+-
+-          if (!isSystemCategory) {
+-            await PromptLibrary.updateCustomPrompt(prompt.id, {
+-              ...prompt,
+-              category: 'Custom',
+-            });
+-            updatedCount++;
+-          }
+-        }),
+-      );
+-
+-      logStore.logSystem(`Cleared all custom categories (${updatedCount} prompts updated)`);
+-      toast.success(
+-        `All custom categories deleted. ${updatedCount} ${updatedCount === 1 ? 'prompt' : 'prompts'} moved to "Custom" category.`,
+-      );
+-
+-      setActiveCategory(null);
+-      await loadPrompts();
+-    } catch (error) {
+-      console.error('Error clearing custom categories:', error);
+-      toast.error('Failed to clear custom categories');
+-    }
+-  };
+-
+-  // Handle clearing all custom prompts/rules
+-  const handleClearCustomContent = async () => {
+-    if (!window.confirm(`Are you sure you want to delete ALL custom items? This cannot be undone.`)) {
+-      return;
+-    }
+-
+-    try {
+-      // Get all custom prompts and delete them
+-      const prompts = await PromptLibrary.getCustomPrompts();
+-      let deletedCount = 0;
+-
+-      await Promise.all(
+-        prompts.map(async (prompt: CustomPrompt) => {
+-          await PromptLibrary.deleteCustomPrompt(prompt.id);
+-          deletedCount++;
+-        }),
+-      );
+-
+-      // Reset to default prompt if the current one was deleted
+-      if (promptId !== 'default' && !systemPrompts.find((p) => p.id === promptId)) {
+-        setPromptId('default');
+-      }
+-
+-      logStore.logSystem(`Cleared all custom items (${deletedCount} items deleted)`);
+-      toast.success(`All custom items deleted successfully.`);
+-
+-      await loadPrompts();
+-    } catch (error) {
+-      console.error('Error clearing custom content:', error);
+-      toast.error('Failed to clear custom content');
+-    }
+-  };
+-
+   // Handle adding item
+   const handleAddItem = async () => {
+     try {
+@@ -1071,7 +996,7 @@ export default function PromptLibraryTab() {
+ 
+             <ScrollArea className="max-h-[60vh] pr-4">
+               <div className="space-y-6">
+-                {/* Kategori Listesi */}
++                {/* Category List */}
+                 <div>
+                   <div className="flex items-center justify-between mb-4">
+                     <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">Categories</h3>
+@@ -1217,6 +1142,7 @@ export default function PromptLibraryTab() {
+               <DialogTitle className="text-xl font-semibold text-gray-900 dark:text-white">Import from URL</DialogTitle>
+             </div>
+ 
++            {/* Import Form */}
+             <DialogDescription className="mb-6 text-gray-500 dark:text-gray-400">
+               Import prompts or rules from a URL. Supports various formats including text, JSON, CSV, and HTML.
+             </DialogDescription>
+diff --git a/app/components/UrlImportForm.tsx b/app/components/UrlImportForm.tsx
+index 36e4ac3..028ee73 100644
+--- a/app/components/UrlImportForm.tsx
++++ b/app/components/UrlImportForm.tsx
+@@ -47,8 +47,8 @@ export function UrlImportForm({ onClose, defaultType = 'prompt' }: UrlImportForm
+     try {
+       const loadedCategories = await getCategories(config.type);
+       setCategories(loadedCategories);
+-    } catch (_error) {
+-      console.error('Error loading categories:', _error);
++    } catch {
++      console.error('Error loading categories');
+       toast.error('Failed to load categories');
+     }
+   };
+@@ -61,7 +61,7 @@ export function UrlImportForm({ onClose, defaultType = 'prompt' }: UrlImportForm
+         try {
+           await handleImport(data.content, data.metadata);
+           toast.success('Content updated from URL');
+-        } catch (error) {
++        } catch {
+           toast.error('Failed to update content from URL');
+         }
+       });
+@@ -198,16 +198,9 @@ export function UrlImportForm({ onClose, defaultType = 'prompt' }: UrlImportForm
+         autoCheck: false,
+       });
+       onClose?.();
+-    } catch (error) {
+-      if (error instanceof Error) {
+-        // Show specific error message
+-        toast.error(error.message);
+-      } else {
+-        // Fallback error message
+-        toast.error('Failed to import content. Please try again.');
+-      }
+-
+-      console.error('Import error:', error);
++    } catch {
++      // Show fallback error message
++      toast.error('Failed to import content. Please try again.');
+     } finally {
+       setIsSubmitting(false);
+     }
+diff --git a/app/components/chat/BaseChat.tsx b/app/components/chat/BaseChat.tsx
+index 0a1c553..90ba6a4 100644
+--- a/app/components/chat/BaseChat.tsx
++++ b/app/components/chat/BaseChat.tsx
+@@ -18,20 +18,17 @@ import * as Tooltip from '@radix-ui/react-tooltip';
+ import { motion, AnimatePresence } from 'framer-motion';
+ import { useStore } from '@nanostores/react';
+ import { profileStore } from '~/lib/stores/profile';
+-
+ import styles from './BaseChat.module.scss';
+ import { ExportChatButton } from '~/components/chat/chatExportAndImport/ExportChatButton';
+ import { ImportButtons } from '~/components/chat/chatExportAndImport/ImportButtons';
+ import { ExamplePrompts } from '~/components/chat/ExamplePrompts';
+ import GitCloneButton from './GitCloneButton';
+-
+ import FilePreview from './FilePreview';
+ import { ModelSelector } from '~/components/chat/ModelSelector';
+ import { SpeechRecognitionButton } from '~/components/chat/SpeechRecognition';
+ import type { ProviderInfo } from '~/types/model';
+ import { ScreenshotStateManager } from './ScreenshotStateManager';
+ import { toast } from 'react-toastify';
+-import StarterTemplates from './StarterTemplates';
+ import type { ActionAlert } from '~/types/actions';
+ import ChatAlert from './ChatAlert';
+ import type { ModelInfo } from '~/lib/modules/llm/types';
+diff --git a/app/components/ui/Slider.tsx b/app/components/ui/Slider.tsx
+index d46dc2a..70ec953 100644
+--- a/app/components/ui/Slider.tsx
++++ b/app/components/ui/Slider.tsx
+@@ -4,11 +4,6 @@ import { classNames } from '~/utils/classNames';
+ import { cubicEasingFn } from '~/utils/easings';
+ import { genericMemo } from '~/utils/react';
+ 
+-interface SliderOption<T> {
+-  value: T;
+-  text: string;
+-}
+-
+ export type SliderOptions<T> = {
+   left: { value: T; text: string };
+   middle?: { value: T; text: string };
+diff --git a/app/components/workbench/FileTree.tsx b/app/components/workbench/FileTree.tsx
+index e5d2677..2ccd836 100644
+--- a/app/components/workbench/FileTree.tsx
++++ b/app/components/workbench/FileTree.tsx
+@@ -274,7 +274,6 @@ function File({
+   fileHistory = {},
+ }: FileProps) {
+   const fileModifications = fileHistory[fullPath];
+-  const hasModifications = fileModifications?.changes?.length > 0;
+ 
+   // Calculate added and removed lines from the most recent changes
+   const { additions, deletions } = useMemo(() => {
+diff --git a/app/components/workbench/Workbench.client.tsx b/app/components/workbench/Workbench.client.tsx
+index 2353956..bb1c307 100644
+--- a/app/components/workbench/Workbench.client.tsx
++++ b/app/components/workbench/Workbench.client.tsx
+@@ -5,7 +5,6 @@ import { memo, useCallback, useEffect, useState, useMemo } from 'react';
+ import { toast } from 'react-toastify';
+ import { Popover, Transition } from '@headlessui/react';
+ import { diffLines, type Change } from 'diff';
+-import { formatDistanceToNow as formatDistance } from 'date-fns';
+ import { ActionRunner } from '~/lib/runtime/action-runner';
+ import { getLanguageFromExtension } from '~/utils/getLanguageFromExtension';
+ import type { FileHistory } from '~/types/actions';
+@@ -17,6 +16,7 @@ import {
+ import { IconButton } from '~/components/ui/IconButton';
+ import { PanelHeaderButton } from '~/components/ui/PanelHeaderButton';
+ import { Slider } from '~/components/ui/Slider';
++import type { SliderOptions } from '~/components/ui/Slider';
+ import { workbenchStore, type WorkbenchViewType } from '~/lib/stores/workbench';
+ import { classNames } from '~/utils/classNames';
+ import { cubicEasingFn } from '~/utils/easings';
+@@ -25,7 +25,9 @@ import { EditorPanel } from './EditorPanel';
+ import { Preview } from './Preview';
+ import useViewport from '~/lib/hooks';
+ import { PushToGitHubDialog } from '~/components/@settings/tabs/connections/components/PushToGitHubDialog';
+-import Cookies from 'js-cookie';
++import { useSettings } from '~/lib/hooks/useSettings';
++import { logStore } from '~/lib/stores/logs';
++import { PromptLibrary } from '~/lib/common/prompt-library';
+ 
+ interface WorkspaceProps {
+   chatStarted?: boolean;
+@@ -79,13 +81,13 @@ const FileModifiedDropdown = memo(
+     fileHistory: Record<string, FileHistory>;
+     onSelectFile: (filePath: string) => void;
+   }) => {
+-    const modifiedFiles = Object.entries(fileHistory);
+-    const hasChanges = modifiedFiles.length > 0;
++    const files = Object.entries(fileHistory);
++    const hasChanges = files.length > 0;
+     const [searchQuery, setSearchQuery] = useState('');
+ 
+     const filteredFiles = useMemo(() => {
+-      return modifiedFiles.filter(([filePath]) => filePath.toLowerCase().includes(searchQuery.toLowerCase()));
+-    }, [modifiedFiles, searchQuery]);
++      return files.filter(([filePath]) => filePath.toLowerCase().includes(searchQuery.toLowerCase()));
++    }, [files, searchQuery]);
+ 
+     return (
+       <div className="flex items-center gap-2">
+@@ -96,7 +98,7 @@ const FileModifiedDropdown = memo(
+                 <span className="font-medium">File Changes</span>
+                 {hasChanges && (
+                   <span className="w-5 h-5 rounded-full bg-accent-500/20 text-accent-500 text-xs flex items-center justify-center border border-accent-500/30">
+-                    {modifiedFiles.length}
++                    {files.length}
+                   </span>
+                 )}
+               </Popover.Button>
+@@ -285,8 +287,6 @@ export const Workbench = memo(
+     const [isPushDialogOpen, setIsPushDialogOpen] = useState(false);
+     const [fileHistory, setFileHistory] = useState<Record<string, FileHistory>>({});
+ 
+-    const modifiedFiles = Array.from(useStore(workbenchStore.unsavedFiles).keys());
+-
+     const hasPreview = useStore(computed(workbenchStore.previews, (previews) => previews.length > 0));
+     const showWorkbench = useStore(workbenchStore.showWorkbench);
+     const selectedFile = useStore(workbenchStore.selectedFile);
+@@ -353,6 +353,47 @@ export const Workbench = memo(
+       workbenchStore.currentView.set('diff');
+     }, []);
+ 
++    useEffect(() => {
++      const initializePrompts = async () => {
++        try {
++          // First check if the rule exists
++          const customPromptsData = await PromptLibrary.getCustomPrompts();
++          const existingRule = customPromptsData.find((p) => p.id === 'rule_typescript_guidelines');
++
++          // If rule doesn't exist, add it silently without toast messages
++          if (!existingRule) {
++            const guidelinesContent = `# TypeScript Project Guidelines
++
++## Project Structure
++- Use a clear and consistent directory structure
++- Separate source code (src/) from build output (dist/)
++- Keep related files together in feature-based directories
++- Use meaningful file names that reflect their purpose
++
++## TypeScript Configuration
++- Maintain a strict tsconfig.json
++- Enable strict type checking
++- Use project references for large codebases
++- Configure module resolution strategy
++- Set appropriate target ECMAScript version`;
++
++            await PromptLibrary.addCustomPrompt({
++              id: 'rule_typescript_guidelines',
++              label: 'TypeScript Project - Project Guidelines',
++              description: 'Essential guidelines and best practices for TypeScript projects',
++              content: guidelinesContent,
++              category: 'Development',
++            });
++          }
++        } catch (error) {
++          console.error('Error initializing prompts:', error);
++          logStore.logSystem('Failed to initialize prompts');
++        }
++      };
++
++      initializePrompts();
++    }, []);
++
+     return (
+       chatStarted && (
+         <motion.div
+@@ -439,7 +480,7 @@ export const Workbench = memo(
+                     initial={{ x: '100%' }}
+                     animate={{ x: selectedView === 'diff' ? '0%' : selectedView === 'code' ? '100%' : '-100%' }}
+                   >
+-                    <DiffView fileHistory={fileHistory} setFileHistory={setFileHistory} actionRunner={actionRunner} />
++                    <DiffView fileHistory={fileHistory} setFileHistory={setFileHistory} _actionRunner={actionRunner} />
+                   </View>
+                   <View initial={{ x: '100%' }} animate={{ x: selectedView === 'preview' ? '0%' : '100%' }}>
+                     <Preview />
+diff --git a/app/lib/common/db.ts b/app/lib/common/db.ts
+index ea0b1dd..fbb6e22 100644
+--- a/app/lib/common/db.ts
++++ b/app/lib/common/db.ts
+@@ -22,15 +22,21 @@ interface PromptDBSchema extends DBSchema {
+       name: string;
+       type: 'system' | 'custom';
+       createdAt: Date;
++      isDefault?: boolean;
+     };
+   };
+ }
+ 
++const DEFAULT_CATEGORIES = ['Development', 'Writing', 'Business', 'Education', 'Custom'];
++
+ export class DB {
+   private static _instance: DB;
+   private _db: IDBPDatabase<PromptDBSchema> | null = null;
+ 
+-  private constructor() {}
++  // Private constructor for singleton pattern - initialization is done in connect()
++  private constructor() {
++    // Initialization is done in connect() method
++  }
+ 
+   static getInstance(): DB {
+     if (!DB._instance) {
+@@ -49,7 +55,17 @@ export class DB {
+           promptStore.createIndex('by-category', 'category');
+ 
+           // Categories store
+-          db.createObjectStore('categories', { keyPath: 'name' });
++          const categoryStore = db.createObjectStore('categories', { keyPath: 'name' });
++          
++          // Add default categories
++          DEFAULT_CATEGORIES.forEach(name => {
++            categoryStore.put({
++              name,
++              type: 'system',
++              createdAt: new Date(),
++              isDefault: true
++            });
++          });
+         },
+       });
+     }
+diff --git a/app/lib/common/prompt-library.ts b/app/lib/common/prompt-library.ts
+index 25044e8..142cb86 100644
+--- a/app/lib/common/prompt-library.ts
++++ b/app/lib/common/prompt-library.ts
+@@ -20,7 +20,7 @@ export interface CustomPrompt {
+ }
+ 
+ export class PromptLibrary {
+-  private static readonly SYSTEM_PROMPTS: CustomPrompt[] = [];
++  private static readonly _systemPrompts: CustomPrompt[] = [];
+ 
+   static library: Record<
+     string,
+@@ -43,7 +43,7 @@ export class PromptLibrary {
+   };
+ 
+   static getList(): CustomPrompt[] {
+-    return this.SYSTEM_PROMPTS;
++    return this._systemPrompts;
+   }
+ 
+   static async getCustomPrompts(): Promise<CustomPrompt[]> {
+@@ -58,8 +58,9 @@ export class PromptLibrary {
+         isSystem: p.isSystem,
+         isActive: p.isActive,
+       }));
+-    } catch (_error) {
+-      console.error('Error getting prompts:', _error);
++    } catch (err) {
++      // Log the error for debugging but don't expose it
++      console.error('Error getting prompts:', err instanceof Error ? err.message : 'Unknown error');
+       return [];
+     }
+   }
+@@ -68,8 +69,8 @@ export class PromptLibrary {
+     try {
+       const categories = await promptDB.getAllCategories();
+       return categories.map((c) => c.name).sort();
+-    } catch (_error) {
+-      console.error('Error getting categories:', _error);
++    } catch {
++      console.error('Error getting categories');
+       return [];
+     }
+   }
+diff --git a/app/lib/common/prompts/optimized.ts b/app/lib/common/prompts/optimized.ts
+index 8e70676..ce86874 100644
+--- a/app/lib/common/prompts/optimized.ts
++++ b/app/lib/common/prompts/optimized.ts
+@@ -1,7 +1,6 @@
+-import { PromptLibrary } from '~/lib/common/prompt-library';
+-import type { PromptOptions } from '../prompt-library';
++import type { PromptOptions } from '~/lib/common/prompt-library';
+ 
+-export default function optimized(options: PromptOptions) {
++export default function optimized(options: PromptOptions): string {
+   return `You are an expert software developer. Help me with coding tasks, debugging, and technical questions.
+ Your working directory is: ${options.cwd}`;
+ }
+diff --git a/app/lib/runtime/action-runner.ts b/app/lib/runtime/action-runner.ts
+index 909016a..6515e97 100644
+--- a/app/lib/runtime/action-runner.ts
++++ b/app/lib/runtime/action-runner.ts
+@@ -317,25 +317,21 @@ export class ActionRunner {
+   async getFileHistory(filePath: string): Promise<FileHistory | null> {
+     try {
+       const webcontainer = await this.#webcontainer;
+-      const historyPath = this.#getHistoryPath(filePath);
+-      const content = await webcontainer.fs.readFile(historyPath, 'utf-8');
++      const fileHandle = await webcontainer.fs.readFile(filePath, 'utf-8');
+ 
+-      return JSON.parse(content);
+-    } catch (error) {
++      return JSON.parse(fileHandle.toString());
++    } catch {
+       return null;
+     }
+   }
+ 
+   async saveFileHistory(filePath: string, history: FileHistory) {
+-    const webcontainer = await this.#webcontainer;
+-    const historyPath = this.#getHistoryPath(filePath);
+-
+-    await this.#runFileAction({
+-      type: 'file',
+-      filePath: historyPath,
+-      content: JSON.stringify(history),
+-      changeSource: 'auto-save',
+-    } as any);
++    try {
++      const webcontainer = await this.#webcontainer;
++      await webcontainer.fs.writeFile(filePath, JSON.stringify(history, null, 2), 'utf-8');
++    } catch (_error) {
++      console.error('Error saving file history:', _error);
++    }
+   }
+ 
+   #getHistoryPath(filePath: string) {
+diff --git a/app/lib/stores/files.ts b/app/lib/stores/files.ts
+index e986253..04b846f 100644
+--- a/app/lib/stores/files.ts
++++ b/app/lib/stores/files.ts
+@@ -1,7 +1,6 @@
+ import type { PathWatcherEvent, WebContainer } from '@webcontainer/api';
+ import { map, type MapStore } from 'nanostores';
+-import { Buffer } from 'node:buffer';
+-import { path } from '~/utils/path';
++import { path as nodePath } from '~/utils/path';
+ import { bufferWatchEvents } from '~/utils/buffer';
+ import { WORK_DIR } from '~/utils/constants';
+ import { computeFileModifications } from '~/utils/diff';
+@@ -106,7 +105,7 @@ export class FilesStore {
+     const webcontainer = await this.#webcontainer;
+ 
+     try {
+-      const relativePath = path.relative(webcontainer.workdir, filePath);
++      const relativePath = nodePath.relative(webcontainer.workdir, filePath);
+ 
+       if (!relativePath) {
+         throw new Error(`EINVAL: invalid file path, write '${relativePath}'`);
+diff --git a/app/routes/api.chat.ts b/app/routes/api.chat.ts
+index 038b875..093bd7b 100644
+--- a/app/routes/api.chat.ts
++++ b/app/routes/api.chat.ts
+@@ -11,6 +11,29 @@ import { WORK_DIR } from '~/utils/constants';
+ import { createSummary } from '~/lib/.server/llm/create-summary';
+ import { extractPropertiesFromMessage } from '~/lib/.server/llm/utils';
+ 
++// Constants
++const CONTINUE_MESSAGE = 'Please continue with your previous response.';
++const SMALL_MODEL_PROVIDERS = ['ollama', 'local', 'lmstudio'];
++const SMALL_MODEL_MAX_CONTEXT = 4096;
++
++function isSmallModel(provider: string): boolean {
++  if (!provider) {
++    return false;
++  }
++
++  return SMALL_MODEL_PROVIDERS.includes(provider.toLowerCase());
++}
++
++function optimizeContextForSmallModel(content: string, maxLength: number = SMALL_MODEL_MAX_CONTEXT): string {
++  if (!content || content.length <= maxLength) {
++    return content;
++  }
++
++  // Keep the first part and last part of the context
++  const halfLength = Math.floor(maxLength / 2);
++  return content.slice(0, halfLength) + '\n...\n' + content.slice(-halfLength);
++}
++
+ export async function action(args: ActionFunctionArgs) {
+   return chatAction(args);
+ }
+@@ -50,6 +73,27 @@ async function chatAction({ context, request }: ActionFunctionArgs) {
+   );
+ 
+   const stream = new SwitchableStream();
++  const lastMessage = messages[messages.length - 1];
++  const { provider } = extractPropertiesFromMessage(lastMessage);
++  const isSmallLLM = isSmallModel(provider);
++
++  // Optimize context for small LLMs
++  if (isSmallLLM && contextOptimization) {
++    // Reduce context window for small models
++    const messageSliceId = Math.max(0, messages.length - 2);
++    const optimizedMessages = messages.slice(messageSliceId);
++
++    // Optimize file content if present
++    if (files) {
++      Object.keys(files).forEach((key) => {
++        if (files[key].content) {
++          files[key].content = optimizeContextForSmallModel(files[key].content);
++        }
++      });
++    }
++
++    messages.splice(0, messages.length, ...optimizedMessages);
++  }
+ 
+   const cumulativeUsage = {
+     completionTokens: 0,
+@@ -226,7 +270,7 @@ async function chatAction({ context, request }: ActionFunctionArgs) {
+             messages.push({
+               id: generateId(),
+               role: 'user',
+-              content: `[Model: ${model}]\n\n[Provider: ${provider}]\n\nPlease continue with your previous response.`,
++              content: `[Model: ${model}]\n\n[Provider: ${provider}]\n\n${CONTINUE_MESSAGE}`,
+             });
+ 
+             const result = await streamText({
+diff --git a/app/types/settings.ts b/app/types/settings.ts
+index bb69f11..d1af902 100644
+--- a/app/types/settings.ts
++++ b/app/types/settings.ts
+@@ -1,4 +1,4 @@
+-import type { TabType, WindowType, UserTabConfig } from '~/components/@settings/core/types';
++import type { WindowType, UserTabConfig } from '~/components/@settings/core/types';
+ 
+ export interface TabConfiguration {
+   userTabs: UserTabConfig[];
+diff --git a/app/utils/importHelpers.ts b/app/utils/importHelpers.ts
+index 443434f..440230f 100644
+--- a/app/utils/importHelpers.ts
++++ b/app/utils/importHelpers.ts
+@@ -26,7 +26,7 @@ const convertGitHubUrl = (url: string): string => {
+     }
+ 
+     return url;
+-  } catch (_error) {
++  } catch {
+     return url;
+   }
+ };
+@@ -88,7 +88,7 @@ export const fetchFromUrl = async (
+             content: typeof jsonData === 'string' ? jsonData : JSON.stringify(jsonData, null, 2),
+             metadata: typeof jsonData === 'object' && jsonData !== null ? jsonData : undefined,
+           };
+-        } catch (_error) {
++        } catch {
+           throw new Error('Failed to parse JSON content');
+         }
+ 
+@@ -104,7 +104,7 @@ export const fetchFromUrl = async (
+             content: records.map((record: any) => record.content || '').join('\n'),
+             metadata: { records },
+           };
+-        } catch (_error) {
++        } catch {
+           throw new Error('Failed to parse CSV content');
+         }
+ 
+@@ -121,7 +121,7 @@ export const fetchFromUrl = async (
+             content: textContent,
+             metadata: { originalHtml: html },
+           };
+-        } catch (_error) {
++        } catch {
+           throw new Error('Failed to extract text from HTML');
+         }
+ 
+diff --git a/package.json b/package.json
+index 43d8338..9a9a42e 100644
+--- a/package.json
++++ b/package.json
+@@ -163,6 +163,7 @@
+     "node-fetch": "^3.3.2",
+     "pnpm": "^9.14.4",
+     "prettier": "^3.4.1",
++    "rimraf": "^6.0.1",
+     "sass-embedded": "^1.81.0",
+     "typescript": "^5.7.2",
+     "unified": "^11.0.5",
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index ba1751a..efdb091 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -399,6 +399,9 @@ importers:
+       prettier:
+         specifier: ^3.4.1
+         version: 3.5.0
++      rimraf:
++        specifier: ^6.0.1
++        version: 6.0.1
+       sass-embedded:
+         specifier: ^1.81.0
+         version: 1.83.4
+@@ -4350,6 +4353,11 @@ packages:
+     resolution: {integrity: sha512-7Bv8RF0k6xjo7d4A/PxYLbUCfb6c+Vpd2/mB2yRDlew7Jb5hEXiCD9ibfO7wpk8i4sevK6DFny9h7EYbM3/sHg==}
+     hasBin: true
+ 
++  glob@11.0.1:
++    resolution: {integrity: sha512-zrQDm8XPnYEKawJScsnM0QzobJxlT/kHOOlRTio8IH/GrmxRE5fjllkzdaHclIuNjUQTJYH2xHNIGfdpJkDJUw==}
++    engines: {node: 20 || >=22}
++    hasBin: true
++
+   globals@11.12.0:
+     resolution: {integrity: sha512-WOBp/EEGUiIsJSp7wcv/y6MO+lV9UoncWqxuFfm8eBwzWNgyfBd6Gz+IeKQ9jCmyhoH99g15M3T+QaVHFjizVA==}
+     engines: {node: '>=4'}
+@@ -4685,6 +4693,10 @@ packages:
+   jackspeak@3.4.3:
+     resolution: {integrity: sha512-OGlZQpz2yfahA/Rd1Y8Cd9SIEsqvXkLVoSw/cgwhnhFMDbsQFeZYoJJ7bIZBS9BcamUW96asq/npPWugM+RQBw==}
+ 
++  jackspeak@4.1.0:
++    resolution: {integrity: sha512-9DDdhb5j6cpeitCbvLO7n7J4IxnbM6hoF6O1g4HQ5TfhvvKN8ywDM7668ZhMHRqVmxqhps/F6syWK2KcPxYlkw==}
++    engines: {node: 20 || >=22}
++
+   javascript-stringify@2.1.0:
+     resolution: {integrity: sha512-JVAfqNPTvNq3sB/VHQJAFxN/sPgKnsKrCwyRt15zwNCdrMMJDdcEOdubuy+DuJYYdm0ox1J4uzEuYKkN+9yhVg==}
+ 
+@@ -4839,6 +4851,10 @@ packages:
+   lru-cache@10.4.3:
+     resolution: {integrity: sha512-JNAzZcXrCt42VGLuYz0zfAzDfAvJWW6AfYlDBQyDV5DClI2m5sAmK+OIO7s59XfsRsWHp02jAJrRadPRGTt6SQ==}
+ 
++  lru-cache@11.0.2:
++    resolution: {integrity: sha512-123qHRfJBmo2jXDbo/a5YOQrJoHF/GNQTLzQ5+IdK5pWpceK17yRc6ozlWd25FxvGKQbIUs91fDFkXmDHTKcyA==}
++    engines: {node: 20 || >=22}
++
+   lru-cache@5.1.1:
+     resolution: {integrity: sha512-KpNARQA3Iwv+jTA0utUVVbrh+Jlrr1Fv0e56GGzAFOXN7dk/FviaDW8LHmK52DlcH4WP2n6gI8vN1aesBFgo9w==}
+ 
+@@ -5203,6 +5219,10 @@ packages:
+   minimalistic-crypto-utils@1.0.1:
+     resolution: {integrity: sha512-JIYlbt6g8i5jKfJ3xz7rF0LXmv2TkDxBLUkiBeZ7bAx4GnnNMr8xFpGnOxn6GhTEHx3SjRrZEoU+j04prX1ktg==}
+ 
++  minimatch@10.0.1:
++    resolution: {integrity: sha512-ethXTt3SGGR+95gudmqJ1eNhRO7eGEGIgYA9vnPatK4/etz2MEVDno5GMCibdMTuBMyElzIlgxMna3K94XDIDQ==}
++    engines: {node: 20 || >=22}
++
+   minimatch@3.1.2:
+     resolution: {integrity: sha512-J7p63hRiAjw1NDEww1W7i37+ByIrOWO5XQQAzZ3VOcL0PNybwpfmV/N05zFAzwQ9USyEcX6t3UO+K5aqBQOIHw==}
+ 
+@@ -5506,6 +5526,10 @@ packages:
+     resolution: {integrity: sha512-Xa4Nw17FS9ApQFJ9umLiJS4orGjm7ZzwUrwamcGQuHSzDyth9boKDaycYdDcZDuqYATXw4HFXgaqWTctW/v1HA==}
+     engines: {node: '>=16 || 14 >=14.18'}
+ 
++  path-scurry@2.0.0:
++    resolution: {integrity: sha512-ypGJsmGtdXUOeM5u93TyeIEfEhM6s+ljAhrk5vAvSx8uyY/02OvrZnA0YNGUrPXfpJMgI1ODd3nwz8Npx4O4cg==}
++    engines: {node: 20 || >=22}
++
+   path-to-regexp@0.1.12:
+     resolution: {integrity: sha512-RA1GjUVMnvYFxuqovrEqZoxxW5NUZqbwKtYz/Tt7nXerk0LbLblQmrsgdeOxV5SFHf0UDggjS/bSeOZwt1pmEQ==}
+ 
+@@ -6047,6 +6071,11 @@ packages:
+     resolution: {integrity: sha512-9aZLIrhRaD97sgVhtJOW6ckOEh6/GnvQtdVNfdZ6s67+3/XwLS9lBcQYzEEhYVeUowN7pRzMLsyGhK2i/xvWbw==}
+     engines: {node: '>= 0.8.15'}
+ 
++  rimraf@6.0.1:
++    resolution: {integrity: sha512-9dkvaxAsk/xNXSJzMgFqqMCuFgt2+KsOFek3TMLfo8NCPfWpBmqwyNn5Y+NX56QUYfCtsyhF3ayiboEoUmJk/A==}
++    engines: {node: 20 || >=22}
++    hasBin: true
++
+   ripemd160@2.0.2:
+     resolution: {integrity: sha512-ii4iagi25WusVoiC4B4lq7pbXfAp3D9v5CwfkY33vffw2+pkDjY1D8GaN7spsxvCSx8dkPqOZCEZyfxcmJG2IA==}
+ 
+@@ -11705,6 +11734,15 @@ snapshots:
+       package-json-from-dist: 1.0.1
+       path-scurry: 1.11.1
+ 
++  glob@11.0.1:
++    dependencies:
++      foreground-child: 3.3.0
++      jackspeak: 4.1.0
++      minimatch: 10.0.1
++      minipass: 7.1.2
++      package-json-from-dist: 1.0.1
++      path-scurry: 2.0.0
++
+   globals@11.12.0: {}
+ 
+   globals@14.0.0: {}
+@@ -12107,6 +12145,10 @@ snapshots:
+     optionalDependencies:
+       '@pkgjs/parseargs': 0.11.0
+ 
++  jackspeak@4.1.0:
++    dependencies:
++      '@isaacs/cliui': 8.0.2
++
+   javascript-stringify@2.1.0: {}
+ 
+   jiti@1.21.7: {}
+@@ -12267,6 +12309,8 @@ snapshots:
+ 
+   lru-cache@10.4.3: {}
+ 
++  lru-cache@11.0.2: {}
++
+   lru-cache@5.1.1:
+     dependencies:
+       yallist: 3.1.1
+@@ -13028,6 +13072,10 @@ snapshots:
+ 
+   minimalistic-crypto-utils@1.0.1: {}
+ 
++  minimatch@10.0.1:
++    dependencies:
++      brace-expansion: 2.0.1
++
+   minimatch@3.1.2:
+     dependencies:
+       brace-expansion: 1.1.11
+@@ -13350,6 +13398,11 @@ snapshots:
+       lru-cache: 10.4.3
+       minipass: 7.1.2
+ 
++  path-scurry@2.0.0:
++    dependencies:
++      lru-cache: 11.0.2
++      minipass: 7.1.2
++
+   path-to-regexp@0.1.12: {}
+ 
+   path-to-regexp@6.3.0: {}
+@@ -13923,6 +13976,11 @@ snapshots:
+   rgbcolor@1.0.1:
+     optional: true
+ 
++  rimraf@6.0.1:
++    dependencies:
++      glob: 11.0.1
++      package-json-from-dist: 1.0.1
++
+   ripemd160@2.0.2:
+     dependencies:
+       hash-base: 3.0.5
+diff --git a/scripts/clean.js b/scripts/clean.js
+new file mode 100644
+index 0000000..4ede828
+--- /dev/null
++++ b/scripts/clean.js
+@@ -0,0 +1,44 @@
++import { fileURLToPath } from 'url';
++import { dirname, join } from 'path';
++import { rimraf } from 'rimraf';
++
++const __filename = fileURLToPath(import.meta.url);
++const __dirname = dirname(__filename);
++
++const dirsToClean = [
++  '.cache',
++  '.vite',
++  'build',
++  'dist',
++  'node_modules/.cache',
++  'node_modules/.vite',
++  '.turbo',
++  '.env.local',
++  '.env.development.local',
++  '.env.test.local',
++  '.env.production.local'
++];
++
++async function clean() {
++  console.log('🧹 Cleaning project...');
++
++  for (const dir of dirsToClean) {
++    const fullPath = join(process.cwd(), dir);
++    try {
++      await rimraf(fullPath);
++      console.log(`✨ Cleaned ${dir}`);
++    } catch (error) {
++      // Ignore errors if directory doesn't exist
++      if (error.code !== 'ENOENT') {
++        console.error(`❌ Error cleaning ${dir}:`, error.message);
++      }
++    }
++  }
++
++  console.log('✅ Clean complete!');
++}
++
++clean().catch(error => {
++  console.error('Failed to clean:', error);
++  process.exit(1);
++}); 
+\ No newline at end of file
+-- 
+2.47.1.windows.2
+
